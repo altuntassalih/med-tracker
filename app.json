@@ -5,6 +5,7 @@
     "version": "1.0.2",
     "android": {
       "package": "com.medtracker.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#6C63FF"
