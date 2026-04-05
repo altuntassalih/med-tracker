@@ -1,50 +1,72 @@
-# Welcome to your Expo app 👋
+# Med-Tracker 💊
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Med-Tracker is a premium, AI-powered medication management application designed to simplify your health routine. Track medications for yourself and your family with a state-of-the-art, dark-mode-optimized user experience.
 
-## Get started
+[Türkçe açıklama için aşağıya kaydırın / Scroll down for Turkish description]
 
-1. Install dependencies
+---
 
-   ```bash
-   npm install
-   ```
+## 🌟 Key Features (English)
 
-2. Start the app
+-   **🤖 AI-Powered Suggestions**: Search and discover medication names instantly using Google Gemini AI.
+-   **🌍 Crowdsourced Global Cache**: Every medication found via AI is saved to a global Firestore database, shared in real-time with all users worldwide.
+-   **👤 Multi-Profile Support**: Manage up to 5 different profiles (family members, pets, etc.) with personalized avatars and medication plans.
+-   **🔄 Real-Time Synchronization**: All updates are synced instantly across your devices and with the global database.
+-   **🌙 Premium Dark UI**: A sleek, modern, and eye-friendly dark mode interface.
+-   **⏰ Smart Reminders**: Never miss a dose with local push notifications and detailed medication logs.
 
-   ```bash
-   npx expo start
-   ```
+### 🛠 Tech Stack
+-   **Frontend**: React Native / Expo (Router) / TypeScript
+-   **State Management**: Zustand (with Persistence)
+-   **Backend**: Firebase Firestore (Real-time Database) & Authentication
+-   **AI Intelligence**: Google Gemini API
 
-In the output, you'll find options to open the app in a
+---
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## 🌟 Öne Çıkan Özellikler (Türkçe)
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+-   **🤖 Yapay Zeka Destekli Öneriler**: Google Gemini AI kullanarak ilaç isimlerini anında arayın ve keşfedin.
+-   **🌍 Küresel Bulut Arşivi**: Yapay zeka ile bulunan her ilaç ismi global bir Firestore veritabanına kaydedilir ve tüm dünyadaki kullanıcılarla gerçek zamanlı olarak paylaşılır.
+-   **👤 Çoklu Profil Desteği**: Aile üyeleri, evcil hayvanlar vb. için 5 farklı profile kadar (özel avatarlarla) yönetim sağlayın.
+-   **🔄 Gerçek Zamanlı Senkronizasyon**: Tüm güncellemeler cihazlarınız arasında ve küresel veritabanıyla anlık olarak eşitlenir.
+-   **🌙 Premium Karanlık Arayüz**: Şık, modern ve göz yormayan karanlık mod tasarımı.
+-   **⏰ Akıllı Hatırlatıcılar**: Yerel bildirimler ve detaylı ilaç günlükleri sayesinde hiçbir dozu kaçırmayın.
 
-## Get a fresh project
+### 🛠 Teknoloji Yığını
+-   **Frontend**: React Native / Expo (Router) / TypeScript
+-   **Durum Yönetimi**: Zustand (Kalıcı Hafıza ile)
+-   **Backend**: Firebase Firestore (Canlı Veritabanı) & Kimlik Doğrulama
+-   **Yapay Zeka**: Google Gemini API
 
-When you're ready, run:
+---
 
-```bash
-npm run reset-project
-```
+## 🚀 Getting Started / Başlangıç
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+1.  **Clone the Repo**:
+    ```bash
+    git clone https://github.com/altuntassalih/med-tracker.git
+    cd med-tracker
+    ```
 
-## Learn more
+2.  **Install Dependencies**:
+    ```bash
+    npm install
+    ```
 
-To learn more about developing your project with Expo, look at the following resources:
+3.  **Environment Variables**:
+    Create a `.env` file and add your Gemini API Key:
+    ```env
+    EXPO_PUBLIC_GEMINI_API_KEY=your_gemini_api_key
+    ```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+4.  **Run the App**:
+    ```bash
+    npx expo start
+    ```
 
-## Join the community
+---
 
-Join our community of developers creating universal apps.
+## 📦 Current Version
+**v1.0.2** - Optimized for performance and cross-user real-time sync.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+**Author**: [altuntassalih](https://github.com/altuntassalih)
