@@ -57,6 +57,9 @@ interface AppState {
   lastEmail: string | null;
   alert: AlertConfig | null;
   globalMedications: string[];
+  quietHoursStart: number;
+  quietHoursEnd: number;
+  notificationsEnabled: boolean;
   setUser: (user: User | null) => void;
   setProfiles: (profiles: Profile[]) => void;
   addProfile: (profile: Profile) => void;
@@ -72,6 +75,9 @@ interface AppState {
   setTheme: (theme: 'dark' | 'light') => void;
   setLastEmail: (email: string) => void;
   setGlobalMedications: (meds: string[]) => void;
+  setQuietHoursStart: (time: number) => void;
+  setQuietHoursEnd: (time: number) => void;
+  setNotificationsEnabled: (enabled: boolean) => void;
   logout: () => void;
   showAlert: (config: AlertConfig) => void;
   hideAlert: () => void;
@@ -90,6 +96,9 @@ export const useStore = create<AppState>()(
       lastEmail: null,
       alert: null,
       globalMedications: [],
+      quietHoursStart: 23,
+      quietHoursEnd: 7,
+      notificationsEnabled: true,
       setUser: (user) => set({ user }),
       setProfiles: (profiles) => set({ profiles }),
       addProfile: (profile) => set((state) => ({ profiles: [...state.profiles, profile] })),
@@ -111,6 +120,9 @@ export const useStore = create<AppState>()(
       setTheme: (theme) => set({ theme }),
       setLastEmail: (email) => set({ lastEmail: email }),
       setGlobalMedications: (meds) => set({ globalMedications: meds }),
+      setQuietHoursStart: (time) => set({ quietHoursStart: time }),
+      setQuietHoursEnd: (time) => set({ quietHoursEnd: time }),
+      setNotificationsEnabled: (enabled) => set({ notificationsEnabled: enabled }),
       logout: () => set({ user: null }),
       showAlert: (alert) => set({ alert }),
       hideAlert: () => set({ alert: null }),

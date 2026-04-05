@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import { useStore } from '../store/useStore';
 
 const isExpoGo = Constants.appOwnership === 'expo';
 let Notifications: any = null;
@@ -66,12 +67,39 @@ export const scheduleMedicationNotification = async (
 ): Promise<string> => {
   if (!Notifications) return 'disabled';
   
+  const state = useStore.getState();
+  if (!state.notificationsEnabled) return 'disabled';
+  
   try {
-    const [hour, minute] = time.split(':').map(Number);
+    const [originalHour, originalMinute] = time.split(':').map(Number);
+    
+    // Sessiz saat kontrolü
+    const quietStart = state.quietHoursStart;
+    const quietEnd = state.quietHoursEnd;
+    let isQuiet = false;
+    
+    if (quietStart < quietEnd) {
+      if (originalHour >= quietStart && originalHour < quietEnd) isQuiet = true;
+    } else if (quietStart > quietEnd) {
+      if (originalHour >= quietStart || originalHour < quietEnd) isQuiet = true;
+    }
+
+    if (isQuiet) {
+      console.log(`Bildirim sessiz saatlere (${quietStart}:00 - ${quietEnd}:00) denk geldiği için iptal edildi: ${time}`);
+      return 'quiet_hours';
+    }
+
+    // 5 dakika öncesini hesapla
+    const dateObj = new Date();
+    dateObj.setHours(originalHour, originalMinute, 0, 0);
+    dateObj.setMinutes(dateObj.getMinutes() - 5);
+    
+    const triggerHour = dateObj.getHours();
+    const triggerMinute = dateObj.getMinutes();
     
     let trigger: any = {
-      hour,
-      minute,
+      hour: triggerHour,
+      minute: triggerMinute,
       repeats: true,
     };
 
@@ -83,8 +111,8 @@ export const scheduleMedicationNotification = async (
       const weekday = startD.getDay() + 1; 
       trigger = {
         weekday,
-        hour,
-        minute,
+        hour: triggerHour,
+        minute: triggerMinute,
         repeats: true,
       };
     } else if (intervalDays > 1) {
@@ -93,16 +121,16 @@ export const scheduleMedicationNotification = async (
       // Basitlik ve güvenilirlik için şu an 'her gün' bırakıyoruz veya çoklu planlama yapılabilir.
       // Ancak kullanıcı 'haftalık' için özel istekte bulundu.
       trigger = {
-        hour,
-        minute,
+        hour: triggerHour,
+        minute: triggerMinute,
         repeats: true,
       };
     }
 
     const identifier = await Notifications.scheduleNotificationAsync({
       content: {
-        title: '💊 İlaç Vakti!',
-        body: `${medicationName} (${dosage}) ilacınızı alma saati geldi.`,
+        title: '💊 İlaç Vakti Yaklaşıyor!',
+        body: `${medicationName} (${dosage}) ilacınızı alma saatinize 5 dakika kaldı.`,
         data: { medicationId },
         sound: true,
       },

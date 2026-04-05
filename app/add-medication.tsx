@@ -400,6 +400,18 @@ export default function AddMedicationScreen() {
           </TouchableOpacity>
         </View>
 
+      {/* Android Native Picker for Start Date */}
+      {Platform.OS !== 'ios' && showStartDatePicker && (
+        <DateTimePicker
+          value={new Date(startDate)}
+          mode="date"
+          display="default"
+          onChange={handleStartDateConfirm}
+        />
+      )}
+
+      {/* iOS Modal Spinner for Start Date */}
+      {Platform.OS === 'ios' && (
       <Modal transparent animationType="fade" visible={showStartDatePicker}>
         <View style={styles.pickerOverlay}>
           <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
@@ -413,7 +425,7 @@ export default function AddMedicationScreen() {
               <DateTimePicker
                 value={new Date(startDate)}
                 mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                display="spinner"
                 onChange={handleStartDateConfirm}
                 themeVariant={theme}
                 textColor={colors.textPrimary}
@@ -425,6 +437,7 @@ export default function AddMedicationScreen() {
           </View>
         </View>
       </Modal>
+      )}
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>{t(lang, 'addMedication.typeLabel')}</Text>
@@ -510,6 +523,19 @@ export default function AddMedicationScreen() {
           </View>
         </View>
 
+      {/* Android Native Picker for Time */}
+      {Platform.OS !== 'ios' && showTimePicker && (
+        <DateTimePicker
+          value={getDateFromTimeStr(times[activeTimeIndex])}
+          mode="time"
+          display="default"
+          is24Hour
+          onChange={handleTimePickerConfirm}
+        />
+      )}
+
+      {/* iOS Modal Spinner for Time */}
+      {Platform.OS === 'ios' && (
       <Modal transparent animationType="fade" visible={showTimePicker}>
         <View style={styles.pickerOverlay}>
           <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
@@ -523,7 +549,7 @@ export default function AddMedicationScreen() {
               <DateTimePicker
                 value={getDateFromTimeStr(times[activeTimeIndex])}
                 mode="time"
-                display={Platform.OS === 'ios' ? 'spinner' : 'spinner'}
+                display="spinner"
                 is24Hour
                 onChange={handleTimePickerConfirm}
                 themeVariant={theme}
@@ -536,6 +562,7 @@ export default function AddMedicationScreen() {
           </View>
         </View>
       </Modal>
+      )}
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>{t(lang, 'addMedication.notesLabel')}</Text>

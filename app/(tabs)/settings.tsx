@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Modal, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Modal, Linking, Platform } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { router } from 'expo-router';
 import { auth } from '../../services/firebase';
 import { useStore } from '../../store/useStore';
@@ -7,12 +8,10 @@ import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/App
 import { t, LanguageCode } from '../../constants/translations';
 
 export default function SettingsScreen() {
-  const { logout, language, setLanguage, theme, setTheme, showAlert } = useStore();
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [quietHoursStart, setQuietHoursStart] = useState(23);
-  const [quietHoursEnd, setQuietHoursEnd] = useState(7);
+  const { logout, language, setLanguage, theme, setTheme, showAlert, quietHoursStart, quietHoursEnd, notificationsEnabled, setQuietHoursStart, setQuietHoursEnd, setNotificationsEnabled } = useStore();
   const [showQuietPicker, setShowQuietPicker] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showChangelogModal, setShowChangelogModal] = useState(false);
   const [editingWhich, setEditingWhich] = useState<'start' | 'end'>('start');
 
   const colors = getThemeColors(theme);
@@ -25,6 +24,22 @@ export default function SettingsScreen() {
   const openQuietPicker = (which: 'start' | 'end') => {
     setEditingWhich(which);
     setShowQuietPicker(true);
+  };
+
+  const getDateForHour = (hour: number) => {
+    const d = new Date();
+    d.setHours(hour, 0, 0, 0);
+    return d;
+  };
+
+  const handleQuietPickerConfirm = (_: any, selectedDate?: Date) => {
+    if (Platform.OS !== 'ios') {
+      setShowQuietPicker(false);
+    }
+    if (selectedDate) {
+      if (editingWhich === 'start') setQuietHoursStart(selectedDate.getHours());
+      else setQuietHoursEnd(selectedDate.getHours());
+    }
   };
 
   const handleLogout = () => {
@@ -152,6 +167,10 @@ export default function SettingsScreen() {
               onPress={handleOpenVersion} 
             />
             <Divider colors={colors} />
+            <SettingRow colors={colors} icon="📝" label={lang === 'tr' ? 'Güncelleme Notları' : 'Changelog'} isLink onPress={() => setShowChangelogModal(true)} />
+            <Divider colors={colors} />
+            <SettingRow colors={colors} icon="✉️" label={lang === 'tr' ? 'Bize Ulaşın / Öneri' : 'Contact Us / Feedback'} isLink onPress={() => Linking.openURL('mailto:salihaltuntas@outlook.com')} />
+            <Divider colors={colors} />
             <SettingRow colors={colors} icon="🔒" label={t(lang, 'settings.privacy')} isLink onPress={() => setShowPrivacyModal(true)} />
           </View>
         </View>
@@ -172,47 +191,50 @@ export default function SettingsScreen() {
           <Text style={styles.versionSub}>{t(lang, 'settings.wish')}</Text>
         </View>
 
-        <Modal transparent animationType="fade" visible={showQuietPicker} onRequestClose={() => setShowQuietPicker(false)}>
-          <View style={styles.pickerOverlay}>
-            <View style={[styles.pickerSheet, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-              <View style={styles.pickerHeader}>
-                <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
-                  <Text style={styles.pickerIcon}>{editingWhich === 'start' ? '🌙' : '☀️'}</Text>
+        {/* Android Native Picker for Quiet Hours without Modal wrapper to avoid double popups */}
+        {Platform.OS !== 'ios' && showQuietPicker && (
+          <DateTimePicker
+            value={editingWhich === 'start' ? getDateForHour(quietHoursStart) : getDateForHour(quietHoursEnd)}
+            mode="time"
+            display="default"
+            is24Hour
+            onChange={handleQuietPickerConfirm}
+          />
+        )}
+
+        {/* Quiet Hours iOS Modal with spinner */}
+        {Platform.OS === 'ios' && (
+          <Modal transparent animationType="fade" visible={showQuietPicker} onRequestClose={() => setShowQuietPicker(false)}>
+            <View style={styles.pickerOverlay}>
+              <View style={[styles.pickerSheet, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+                <View style={styles.pickerHeader}>
+                  <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                    <Text style={styles.pickerIcon}>{editingWhich === 'start' ? '🌙' : '☀️'}</Text>
+                  </View>
+                  <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>
+                    {editingWhich === 'start' 
+                      ? t(lang, 'settings.selectStart') 
+                      : t(lang, 'settings.selectEnd')}
+                  </Text>
                 </View>
-                <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>
-                  {editingWhich === 'start' 
-                    ? t(lang, 'settings.selectStart') 
-                    : t(lang, 'settings.selectEnd')}
-                </Text>
+                <View style={{ marginBottom: SPACING.xl }}>
+                  <DateTimePicker
+                    value={editingWhich === 'start' ? getDateForHour(quietHoursStart) : getDateForHour(quietHoursEnd)}
+                    mode="time"
+                    display="spinner"
+                    is24Hour
+                    onChange={handleQuietPickerConfirm}
+                    themeVariant={theme}
+                    textColor={colors.textPrimary}
+                  />
+                </View>
+                <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => setShowQuietPicker(false)}>
+                  <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
+                </TouchableOpacity>
               </View>
-              <ScrollView style={styles.pickerBodyScroll} showsVerticalScrollIndicator={false}>
-                <View style={styles.hourGrid}>
-                  {HOURS.map((h) => {
-                    const isSelected = editingWhich === 'start' ? quietHoursStart === h : quietHoursEnd === h;
-                    return (
-                      <TouchableOpacity
-                        key={h}
-                        style={[styles.hourChip, isSelected && styles.hourChipActive, { backgroundColor: isSelected ? colors.primary : colors.surfaceElevated, borderColor: isSelected ? colors.primary : colors.surfaceBorder }]}
-                        onPress={() => {
-                          if (editingWhich === 'start') setQuietHoursStart(h);
-                          else setQuietHoursEnd(h);
-                          setShowQuietPicker(false);
-                        }}
-                      >
-                        <Text style={[styles.hourChipText, isSelected && styles.hourChipTextActive]}>
-                          {padH(h)}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </ScrollView>
-              <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => setShowQuietPicker(false)}>
-                <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
-              </TouchableOpacity>
             </View>
-          </View>
-        </Modal>
+          </Modal>
+        )}
 
         {/* Gizlilik Politikası Modalı */}
         <Modal transparent animationType="slide" visible={showPrivacyModal} onRequestClose={() => setShowPrivacyModal(false)}>
@@ -242,6 +264,42 @@ export default function SettingsScreen() {
                 </Text>
               </ScrollView>
               <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => setShowPrivacyModal(false)}>
+                <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Changelog Modal */}
+        <Modal transparent animationType="slide" visible={showChangelogModal} onRequestClose={() => setShowChangelogModal(false)}>
+          <View style={styles.pickerOverlay}>
+            <View style={[styles.pickerSheet, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+              <View style={styles.pickerHeader}>
+                <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                  <Text style={styles.pickerIcon}>📋</Text>
+                </View>
+                <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{lang === 'tr' ? 'Yenilikler (v1.0.2)' : 'What\'s New (v1.0.2)'}</Text>
+              </View>
+              <ScrollView style={styles.pickerBodyScroll} showsVerticalScrollIndicator={false}>
+                <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
+                  {lang === 'tr' ? (
+                    "🎉 Yeni Sürümdeki Harika Özellikler:\n\n" +
+                    "• 🤖 Gemini AI Desteği Eklendi: Artık ilaçlarınızla ilgili yapay zekaya anlık sorular sorup akıllı öneriler ve etkileşim analizleri alabilirsiniz.\n" +
+                    "• ⏱️ Zamanlama İyileştirmeleri: Bildirimler tam ilaç vaktinden 5 dakika önce size hatırlatmak üzere otomatik kurulur.\n" +
+                    "• 💤 Akıllı Sessiz Saatler: Uyku vaktinize denk gelen ilaç bildirimlerinizi dilediğiniz gibi sessize alabilirsiniz.\n" +
+                    "• 🌐 Tam Çoklu Dil Desteği (TR/EN) ve Canlı Dinamik Tema (Dark/Light Mode) ile pürüzsüz görünüm!\n" +
+                    "• 👥 Ortak Aile Profilleri eklendi.\n"
+                  ) : (
+                    "🎉 Exciting Features in This Release:\n\n" +
+                    "• 🤖 Gemini AI Integration: Instantly ask AI for medication interaction analysis and smart suggestions.\n" +
+                    "• ⏱️ Improved Timing: Accurate push notifications scheduled exactly 5 minutes before your time.\n" +
+                    "• 💤 Smart Quiet Hours: Select periods where your medication alerts remain completely silent.\n" +
+                    "• 🌐 Full Multilingual Support (TR/EN) alongside Dynamic Themes (Dark/Light).\n" +
+                    "• 👥 Multiple Family Profiles added.\n"
+                  )}
+                </Text>
+              </ScrollView>
+              <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => setShowChangelogModal(false)}>
                 <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
               </TouchableOpacity>
             </View>
