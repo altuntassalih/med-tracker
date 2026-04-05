@@ -77,6 +77,27 @@ export default function AddMedicationScreen() {
   const [activeDuplicateError, setActiveDuplicateError] = useState<string | null>(null);
   const [isSearchingAI, setIsSearchingAI] = useState(false);
 
+  // Modern Pure JS Picker State Variables for Android
+  const [androidHour, setAndroidHour] = useState(8);
+  const [androidMinute, setAndroidMinute] = useState(0);
+  const [androidMonthView, setAndroidMonthView] = useState(new Date());
+
+  const incrementHour = (dir: number) => setAndroidHour(h => (h + dir + 24) % 24);
+  const incrementMinute = (dir: number) => setAndroidMinute(m => (m + dir + 60) % 60);
+
+  const openTimePicker = (index: number) => {
+    setActiveTimeIndex(index);
+    const [h, m] = times[index].split(':').map(Number);
+    setAndroidHour(h);
+    setAndroidMinute(m);
+    setShowTimePicker(true);
+  };
+
+  const openStartDatePicker = () => {
+     setAndroidMonthView(new Date(startDate || new Date()));
+     setShowStartDatePicker(true);
+  };
+
   useEffect(() => {
     // Gerçek zamanlı dinleyici kur (Başka kullanıcılar eklediğinde anında gelsin)
     const unsubscribe = subscribeToGlobalMedications((meds) => {
@@ -89,21 +110,11 @@ export default function AddMedicationScreen() {
   }, []);
 
   const handleTimePickerConfirm = (_: any, selectedDate?: Date) => {
-    setShowTimePicker(false);
-    if (selectedDate) {
-      const h = selectedDate.getHours().toString().padStart(2, '0');
-      const m = selectedDate.getMinutes().toString().padStart(2, '0');
-      const newTimes = [...times];
-      newTimes[activeTimeIndex] = `${h}:${m}`;
-      setTimes(newTimes);
-    }
+    // Legacy support (now handled inline)
   };
 
   const handleStartDateConfirm = (_: any, selectedDate?: Date) => {
-    setShowStartDatePicker(false);
-    if (selectedDate) {
-      setStartDate(selectedDate.toISOString().split('T')[0]);
-    }
+    // Legacy support (now handled inline)
   };
 
   const handleNameChange = (text: string) => {
@@ -128,7 +139,7 @@ export default function AddMedicationScreen() {
       }
 
       // Önerileri filtrele (Yerel + Küresel)
-      const allKnownMeds = [...new Set([...COMMON_MEDICATIONS, ...(globalMedications || [])])];
+      const allKnownMeds = Array.from(new Set([...COMMON_MEDICATIONS, ...(globalMedications || [])]));
       const filtered = allKnownMeds.filter(m => 
         m.toLowerCase().includes(text.toLowerCase()) && 
         m.toLowerCase() !== text.toLowerCase()
@@ -177,7 +188,7 @@ export default function AddMedicationScreen() {
       if (results.length > 0) {
         setSuggestions(results);
         // Yerel store'u anında güncelle ki arama sonuçları hemen öneri olarak gelsin
-        const updatedGlobalMeds = [...new Set([...(globalMedications || []), ...results])];
+        const updatedGlobalMeds = Array.from(new Set([...(globalMedications || []), ...results]));
         setGlobalMedications(updatedGlobalMeds);
       } else {
         showAlert({ 
@@ -216,11 +227,6 @@ export default function AddMedicationScreen() {
     setNotes(template.notes || '');
     setReuseTemplate(null);
     setSuggestions([]);
-  };
-
-  const openTimePicker = (index: number) => {
-    setActiveTimeIndex(index);
-    setShowTimePicker(true);
   };
 
   const getDateFromTimeStr = (timeStr: string): Date => {
@@ -395,49 +401,82 @@ export default function AddMedicationScreen() {
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>{t(lang, 'addMedication.startDateLabel')}</Text>
-          <TouchableOpacity style={styles.datePickerBtn} onPress={() => setShowStartDatePicker(true)} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.datePickerBtn} onPress={openStartDatePicker} activeOpacity={0.7}>
             <Text style={styles.datePickerBtnText}>📅 {formatDate(startDate)}</Text>
           </TouchableOpacity>
         </View>
 
-      {/* Android Native Picker for Start Date */}
-      {Platform.OS !== 'ios' && showStartDatePicker && (
-        <DateTimePicker
-          value={new Date(startDate)}
-          mode="date"
-          display="default"
-          onChange={handleStartDateConfirm}
-        />
-      )}
-
-      {/* iOS Modal Spinner for Start Date */}
-      {Platform.OS === 'ios' && (
-      <Modal transparent animationType="fade" visible={showStartDatePicker}>
+      {/* ----------------- MODERN DATE PICKER MODAL ----------------- */}
+      <Modal transparent animationType="fade" visible={showStartDatePicker} onRequestClose={() => setShowStartDatePicker(false)}>
         <View style={styles.pickerOverlay}>
-          <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-            <View style={styles.pickerHeader}>
-              <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
-                <Text style={styles.pickerIcon}>📅</Text>
+          <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder, padding: 0, overflow: 'hidden' }]}>
+            <View style={[styles.customDatePickerHeader, { backgroundColor: colors.primary }]}>
+              <Text style={styles.customDatePickerYear}>{new Date(startDate).getFullYear()}</Text>
+              <Text style={styles.customDatePickerDate}>
+                {new Date(startDate).toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </Text>
+            </View>
+            <View style={styles.customDatePickerBody}>
+              {Platform.OS === 'ios' ? (
+                <View style={{ paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md }}>
+                  <DateTimePicker
+                    value={new Date(startDate)}
+                    mode="date"
+                    display="spinner"
+                    onChange={(_, selectedDate) => {
+                      if (selectedDate) setStartDate(selectedDate.toISOString().split('T')[0]);
+                    }}
+                    themeVariant={theme}
+                    textColor={colors.textPrimary}
+                    style={{ height: 150 }}
+                  />
+                </View>
+              ) : (
+                /* Pure JS Custom Grid Date Picker for Android - Fully matches Theme! */
+                <View style={{ padding: SPACING.md }}>
+                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.lg }}>
+                      <TouchableOpacity onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() - 1, 1))} style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}>
+                         <Text style={{ color: colors.textPrimary }}>◀</Text>
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.textPrimary }}>
+                         {androidMonthView.toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { month: 'long', year: 'numeric' })}
+                      </Text>
+                      <TouchableOpacity onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 1))} style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}>
+                         <Text style={{ color: colors.textPrimary }}>▶</Text>
+                      </TouchableOpacity>
+                   </View>
+                   <View style={{ flexDirection: 'row', marginBottom: SPACING.md }}>
+                      {['Pt','Sa','Ça','Pe','Cu','Ct','Pz'].map((d, i) => <Text key={i} style={{ flex: 1, textAlign: 'center', color: colors.textSecondary, fontWeight: 'bold', fontSize: 12 }}>{d}</Text>)}
+                   </View>
+                   <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                      {Array.from({ length: (new Date(androidMonthView.getFullYear(), androidMonthView.getMonth(), 1).getDay() + 6) % 7 }).map((_, i) => <View key={`b-${i}`} style={{ width: '14.28%', aspectRatio: 1 }} />)}
+                      {Array.from({ length: new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 0).getDate() }, (_, i) => i + 1).map(d => {
+                         const dStr = `${androidMonthView.getFullYear()}-${(androidMonthView.getMonth()+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
+                         const isSelected = startDate === dStr;
+                         return (
+                            <TouchableOpacity key={d} onPress={() => setStartDate(dStr)} style={{ width: '14.28%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' }}>
+                               <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: isSelected ? colors.primary : 'transparent', justifyContent: 'center', alignItems: 'center' }}>
+                                  <Text style={{ color: isSelected ? '#fff' : colors.textPrimary, fontWeight: isSelected ? 'bold' : 'normal', fontSize: 15 }}>{d}</Text>
+                               </View>
+                            </TouchableOpacity>
+                         );
+                      })}
+                   </View>
+                </View>
+              )}
+
+              <View style={styles.customDatePickerActions}>
+                <TouchableOpacity style={styles.customDatePickerCancelBtn} onPress={() => setShowStartDatePicker(false)}>
+                  <Text style={[styles.customDatePickerActionText, { color: colors.textSecondary }]}>{t(lang, 'settings.cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.customDatePickerOkBtn} onPress={() => setShowStartDatePicker(false)}>
+                  <Text style={[styles.customDatePickerActionText, { color: colors.primary, fontWeight: 'bold' }]}>{t(lang, 'addMedication.confirmBtn')}</Text>
+                </TouchableOpacity>
               </View>
-              <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{t(lang, 'addMedication.startDatePickerTitle')}</Text>
             </View>
-            <View style={styles.pickerBody}>
-              <DateTimePicker
-                value={new Date(startDate)}
-                mode="date"
-                display="spinner"
-                onChange={handleStartDateConfirm}
-                themeVariant={theme}
-                textColor={colors.textPrimary}
-              />
-            </View>
-            <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => setShowStartDatePicker(false)}>
-              <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>
-      )}
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>{t(lang, 'addMedication.typeLabel')}</Text>
@@ -523,20 +562,8 @@ export default function AddMedicationScreen() {
           </View>
         </View>
 
-      {/* Android Native Picker for Time */}
-      {Platform.OS !== 'ios' && showTimePicker && (
-        <DateTimePicker
-          value={getDateFromTimeStr(times[activeTimeIndex])}
-          mode="time"
-          display="default"
-          is24Hour
-          onChange={handleTimePickerConfirm}
-        />
-      )}
-
-      {/* iOS Modal Spinner for Time */}
-      {Platform.OS === 'ios' && (
-      <Modal transparent animationType="fade" visible={showTimePicker}>
+      {/* ----------------- MODERN TIME PICKER MODAL ----------------- */}
+      <Modal transparent animationType="fade" visible={showTimePicker} onRequestClose={() => setShowTimePicker(false)}>
         <View style={styles.pickerOverlay}>
           <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
             <View style={styles.pickerHeader}>
@@ -546,23 +573,64 @@ export default function AddMedicationScreen() {
               <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{t(lang, 'addMedication.timePickerTitle')}</Text>
             </View>
             <View style={styles.pickerBody}>
-              <DateTimePicker
-                value={getDateFromTimeStr(times[activeTimeIndex])}
-                mode="time"
-                display="spinner"
-                is24Hour
-                onChange={handleTimePickerConfirm}
-                themeVariant={theme}
-                textColor={colors.textPrimary}
-              />
+              {Platform.OS === 'ios' ? (
+                <DateTimePicker
+                  value={getDateFromTimeStr(times[activeTimeIndex])}
+                  mode="time"
+                  display="spinner"
+                  is24Hour
+                  onChange={(_, selectedDate) => {
+                    if (selectedDate) {
+                      const h = selectedDate.getHours().toString().padStart(2, '0');
+                      const m = selectedDate.getMinutes().toString().padStart(2, '0');
+                      const newTimes = [...times];
+                      newTimes[activeTimeIndex] = `${h}:${m}`;
+                      setTimes(newTimes);
+                    }
+                  }}
+                  themeVariant={theme}
+                  textColor={colors.textPrimary}
+                />
+              ) : (
+                 /* Pure JS Custom Time Stepper for Android - No Popups, Premium UI! */
+                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: SPACING.xl }}>
+                   <View style={{ alignItems: 'center', width: 80 }}>
+                      <TouchableOpacity onPress={() => incrementHour(1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.md }}>
+                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text>
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 44, fontWeight: 'bold', color: colors.textPrimary }}>{androidHour.toString().padStart(2, '0')}</Text>
+                      <TouchableOpacity onPress={() => incrementHour(-1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.md }}>
+                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text>
+                      </TouchableOpacity>
+                   </View>
+                   <Text style={{ fontSize: 40, fontWeight: 'bold', color: colors.textPrimary, marginHorizontal: SPACING.md }}>:</Text>
+                   <View style={{ alignItems: 'center', width: 80 }}>
+                      <TouchableOpacity onPress={() => incrementMinute(5)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.md }}>
+                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text>
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 44, fontWeight: 'bold', color: colors.textPrimary }}>{androidMinute.toString().padStart(2, '0')}</Text>
+                      <TouchableOpacity onPress={() => incrementMinute(-5)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.md }}>
+                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text>
+                      </TouchableOpacity>
+                   </View>
+                 </View>
+              )}
             </View>
-            <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => setShowTimePicker(false)}>
+            <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => {
+              if (Platform.OS !== 'ios') {
+                 const h = androidHour.toString().padStart(2, '0');
+                 const m = androidMinute.toString().padStart(2, '0');
+                 const newTimes = [...times];
+                 newTimes[activeTimeIndex] = `${h}:${m}`;
+                 setTimes(newTimes);
+              }
+              setShowTimePicker(false);
+            }}>
               <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
-      )}
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>{t(lang, 'addMedication.notesLabel')}</Text>
@@ -717,4 +785,12 @@ const getStyles = (colors: any) => StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
   },
   datePickerBtnText: { fontSize: TYPOGRAPHY.fontSizeMd, color: colors.textPrimary, fontWeight: TYPOGRAPHY.fontWeightMedium },
+  customDatePickerHeader: { padding: SPACING.xl, alignItems: 'flex-start', justifyContent: 'center' },
+  customDatePickerYear: { fontSize: TYPOGRAPHY.fontSizeMd, color: 'rgba(255,255,255,0.7)', fontWeight: 'bold', marginBottom: 4 },
+  customDatePickerDate: { fontSize: TYPOGRAPHY.fontSize2xl, color: '#fff', fontWeight: 'bold' },
+  customDatePickerBody: { padding: 0 },
+  customDatePickerActions: { flexDirection: 'row', justifyContent: 'flex-end', padding: SPACING.md, gap: SPACING.lg },
+  customDatePickerCancelBtn: { padding: SPACING.md },
+  customDatePickerOkBtn: { padding: SPACING.md },
+  customDatePickerActionText: { fontSize: TYPOGRAPHY.fontSizeMd, textTransform: 'uppercase' },
 });

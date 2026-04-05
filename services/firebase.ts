@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import { getAuth, Auth } from 'firebase/auth';
+import { getAuth, Auth, initializeAuth, getReactNativePersistence } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Firebase Ayarları (Fallback değerleri)
 const firebaseConfig = {
@@ -18,12 +19,21 @@ let auth: Auth | null = null;
 let db: Firestore | null = null;
 
 try {
-  app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-  auth = getAuth(app);
+  if (!getApps().length) {
+    app = initializeApp(firebaseConfig);
+    // @ts-ignore
+    auth = initializeAuth(app, {
+      // @ts-ignore
+      persistence: getReactNativePersistence(AsyncStorage),
+    });
+  } else {
+    app = getApp();
+    auth = getAuth(app);
+  }
   db = getFirestore(app);
-} catch (_err) {
+} catch (err: any) {
   // Firebase başlatma hatası - uygulama local modda çalışacak
-  console.warn('[Firebase] Initialization failed, running in local-only mode');
+  console.error('[Firebase] Initialization CRITICAL ERROR:', err);
   app = null;
   auth = null;
   db = null;

@@ -21,8 +21,12 @@ export default function SettingsScreen() {
   const HOURS = Array.from({ length: 24 }, (_, i) => i);
   const padH = (h: number) => h.toString().padStart(2, '0');
 
+  const [androidHour, setAndroidHour] = useState(8);
+  const incrementHour = (dir: number) => setAndroidHour(h => (h + dir + 24) % 24);
+
   const openQuietPicker = (which: 'start' | 'end') => {
     setEditingWhich(which);
+    setAndroidHour(which === 'start' ? quietHoursStart : quietHoursEnd);
     setShowQuietPicker(true);
   };
 
@@ -33,9 +37,8 @@ export default function SettingsScreen() {
   };
 
   const handleQuietPickerConfirm = (_: any, selectedDate?: Date) => {
-    if (Platform.OS !== 'ios') {
-      setShowQuietPicker(false);
-    }
+    // Spinner kullanıldığı için Android'de veya iOS'te anında kapanmasın, sadece seçilen değeri modal kapandığında kaydedelim (okey butonuyla)
+    // Ancak onChange her döndüğünde anlık olarak state'i güncellesin:
     if (selectedDate) {
       if (editingWhich === 'start') setQuietHoursStart(selectedDate.getHours());
       else setQuietHoursEnd(selectedDate.getHours());
@@ -191,50 +194,62 @@ export default function SettingsScreen() {
           <Text style={styles.versionSub}>{t(lang, 'settings.wish')}</Text>
         </View>
 
-        {/* Android Native Picker for Quiet Hours without Modal wrapper to avoid double popups */}
-        {Platform.OS !== 'ios' && showQuietPicker && (
-          <DateTimePicker
-            value={editingWhich === 'start' ? getDateForHour(quietHoursStart) : getDateForHour(quietHoursEnd)}
-            mode="time"
-            display="default"
-            is24Hour
-            onChange={handleQuietPickerConfirm}
-          />
-        )}
-
-        {/* Quiet Hours iOS Modal with spinner */}
-        {Platform.OS === 'ios' && (
-          <Modal transparent animationType="fade" visible={showQuietPicker} onRequestClose={() => setShowQuietPicker(false)}>
-            <View style={styles.pickerOverlay}>
-              <View style={[styles.pickerSheet, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-                <View style={styles.pickerHeader}>
-                  <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
-                    <Text style={styles.pickerIcon}>{editingWhich === 'start' ? '🌙' : '☀️'}</Text>
-                  </View>
-                  <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>
-                    {editingWhich === 'start' 
-                      ? t(lang, 'settings.selectStart') 
-                      : t(lang, 'settings.selectEnd')}
-                  </Text>
+        {/* Quiet Hours Modal (Universal, JS Stepper for Android, System Spinner for iOS) */}
+        <Modal transparent animationType="fade" visible={showQuietPicker} onRequestClose={() => setShowQuietPicker(false)}>
+          <View style={styles.pickerOverlay}>
+            <View style={[styles.pickerSheet, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+              <View style={styles.pickerHeader}>
+                <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                  <Text style={styles.pickerIcon}>{editingWhich === 'start' ? '🌙' : '☀️'}</Text>
                 </View>
-                <View style={{ marginBottom: SPACING.xl }}>
+                <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>
+                  {editingWhich === 'start' 
+                    ? t(lang, 'settings.selectStart') 
+                    : t(lang, 'settings.selectEnd')}
+                </Text>
+              </View>
+              <View style={{ marginBottom: SPACING.xl }}>
+                {Platform.OS === 'ios' ? (
                   <DateTimePicker
                     value={editingWhich === 'start' ? getDateForHour(quietHoursStart) : getDateForHour(quietHoursEnd)}
-                    mode="time"
-                    display="spinner"
-                    is24Hour
-                    onChange={handleQuietPickerConfirm}
-                    themeVariant={theme}
-                    textColor={colors.textPrimary}
+                    mode="time" display="spinner" is24Hour
+                    onChange={(_, selectedDate) => {
+                      if (selectedDate) {
+                        if (editingWhich === 'start') setQuietHoursStart(selectedDate.getHours());
+                        else setQuietHoursEnd(selectedDate.getHours());
+                      }
+                    }}
+                    themeVariant={theme} textColor={colors.textPrimary}
                   />
-                </View>
-                <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => setShowQuietPicker(false)}>
-                  <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
-                </TouchableOpacity>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: SPACING.xl }}>
+                   <View style={{ alignItems: 'center', width: 80 }}>
+                      <TouchableOpacity onPress={() => incrementHour(1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.sm }}><Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text></TouchableOpacity>
+                      <Text style={{ fontSize: 48, fontWeight: 'bold', color: colors.textPrimary }}>{androidHour.toString().padStart(2, '0')}</Text>
+                      <TouchableOpacity onPress={() => incrementHour(-1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.sm }}><Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text></TouchableOpacity>
+                   </View>
+                   <Text style={{ fontSize: 44, fontWeight: 'bold', color: colors.textPrimary, marginHorizontal: SPACING.xl }}>:</Text>
+                   <View style={{ alignItems: 'center', width: 80 }}>
+                      {/* Quiet hours focus purely on hours, minutes can be static 00 */}
+                      <View style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.sm, opacity: 0.2 }}><Text style={{ color: colors.textSecondary, fontSize: 24, fontWeight:'bold' }}>▲</Text></View>
+                      <Text style={{ fontSize: 48, fontWeight: 'bold', color: colors.textSecondary }}>00</Text>
+                      <View style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.sm, opacity: 0.2 }}><Text style={{ color: colors.textSecondary, fontSize: 24, fontWeight:'bold' }}>▼</Text></View>
+                   </View>
+                 </View>
+                )}
               </View>
+              <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => {
+                if (Platform.OS !== 'ios') {
+                  if (editingWhich === 'start') setQuietHoursStart(androidHour);
+                  else setQuietHoursEnd(androidHour);
+                }
+                setShowQuietPicker(false);
+              }}>
+                <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
+              </TouchableOpacity>
             </View>
-          </Modal>
-        )}
+          </View>
+        </Modal>
 
         {/* Gizlilik Politikası Modalı */}
         <Modal transparent animationType="slide" visible={showPrivacyModal} onRequestClose={() => setShowPrivacyModal(false)}>

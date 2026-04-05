@@ -94,14 +94,19 @@ export default function LoginScreen() {
       await loadUserData(cred.user);
       router.replace('/(tabs)');
     } catch (err: any) {
+      console.error('[AUTH ERROR]', err.code, err.message, err);
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
         setError(t(lang, 'login.errorInvalid'));
       } else if (err.code === 'auth/email-already-in-use') {
         setError(t(lang, 'login.errorInUse'));
       } else if (err.code === 'auth/user-not-found') {
         setError(t(lang, 'login.errorNotFound'));
+      } else if (err.code === 'auth/weak-password') {
+        setError(lang === 'tr' ? 'Şifre en az 6 karakter olmalıdır.' : 'Password should be at least 6 characters.');
+      } else if (err.code === 'auth/operation-not-allowed') {
+        setError(lang === 'tr' ? 'Email/Şifre girişi Firebase panelinden kapalı!' : 'Email/Password sign-in is disabled in Firebase!');
       } else {
-        setError(t(lang, 'login.errorGeneric'));
+        setError(`${t(lang, 'login.errorGeneric')} (${err.code || 'Bilinmeyen Hata'})`);
       }
     } finally {
       setIsLoading(false);
