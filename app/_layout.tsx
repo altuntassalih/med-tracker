@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../services/firebase';
 import { getProfiles, getMedications, getMedicationLogs } from '../services/firestore';
+import { requestNotificationPermission, scheduleMedicationNotification, cancelAllNotifications } from '../services/notifications';
 import { useStore } from '../store/useStore';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { getThemeColors } from '../constants/AppConstants';
@@ -56,6 +57,30 @@ export default function RootLayout() {
                   }
                   setMedications(allMeds);
                   setMedicationLogs(allLogs);
+
+                  // Eski bildirimleri iptal et ve yeniden zamanla (trigger formatı düzeltildi)
+                  try {
+                    const hasPermission = await requestNotificationPermission();
+                    if (hasPermission) {
+                      await cancelAllNotifications();
+                      for (const med of allMeds) {
+                        if (med.isActive !== false) {
+                          for (const t of (med.times || [])) {
+                            await scheduleMedicationNotification(
+                              med.id,
+                              med.name,
+                              med.dosage,
+                              t,
+                              med.intervalDays,
+                              med.startDate
+                            );
+                          }
+                        }
+                      }
+                    }
+                  } catch (_notifErr) {
+                    // Bildirim yenileme hatası — sessizce geç
+                  }
                 }
               } catch (_syncErr) {
               } finally {
