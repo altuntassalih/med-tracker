@@ -224,6 +224,20 @@ export const addMedicationLog = async (data: Omit<MedicationLog, 'id' | 'created
   }
 };
 
+export const clearMedicationLogs = async (medicationId: string): Promise<void> => {
+  const firestore = getDb();
+  if (!firestore) return;
+  try {
+    const q = query(
+      collection(firestore, 'medicationLogs'),
+      where('medicationId', '==', medicationId)
+    );
+    const snapshot = await getDocs(q);
+    const deletePromises = snapshot.docs.map((d) => deleteDoc(doc(firestore, 'medicationLogs', d.id)));
+    await Promise.all(deletePromises);
+  } catch (_err) { /* no-op */ }
+};
+
 // ---- KÜRESEL İLAÇ KÜTÜPHANESİ (AI CACHE) ----
 
 export const getGlobalMedicationList = async (): Promise<string[]> => {

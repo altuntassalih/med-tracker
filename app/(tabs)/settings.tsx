@@ -6,9 +6,17 @@ import { auth } from '../../services/firebase';
 import { useStore } from '../../store/useStore';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
+import { scheduleEndOfDayMissedNotification, scheduleTestNotification } from '../../services/notifications';
 
 export default function SettingsScreen() {
-  const { logout, language, setLanguage, theme, setTheme, showAlert, quietHoursStart, quietHoursEnd, notificationsEnabled, setQuietHoursStart, setQuietHoursEnd, setNotificationsEnabled } = useStore();
+  const {
+    logout, language, setLanguage, theme, setTheme, showAlert,
+    quietHoursStart, quietHoursEnd, quietHoursStartMinute, quietHoursEndMinute,
+    notificationsEnabled,
+    setQuietHoursStart, setQuietHoursEnd, setQuietHoursStartMinute, setQuietHoursEndMinute,
+    setNotificationsEnabled,
+    autoMarkMissedAsTaken, setAutoMarkMissedAsTaken,
+  } = useStore();
   const [showQuietPicker, setShowQuietPicker] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showChangelogModal, setShowChangelogModal] = useState(false);
@@ -20,28 +28,41 @@ export default function SettingsScreen() {
 
   const HOURS = Array.from({ length: 24 }, (_, i) => i);
   const padH = (h: number) => h.toString().padStart(2, '0');
+  const padM = (m: number) => m.toString().padStart(2, '0');
 
   const [androidHour, setAndroidHour] = useState(8);
+  const [androidMinute, setAndroidMinute] = useState(0);
+  const MINUTE_STEP = 5; // 5'er dakika adımı
   const incrementHour = (dir: number) => setAndroidHour(h => (h + dir + 24) % 24);
+  const incrementMinute = (dir: number) => setAndroidMinute(m => (m + dir * MINUTE_STEP + 60) % 60);
 
   const openQuietPicker = (which: 'start' | 'end') => {
     setEditingWhich(which);
-    setAndroidHour(which === 'start' ? quietHoursStart : quietHoursEnd);
+    if (which === 'start') {
+      setAndroidHour(quietHoursStart);
+      setAndroidMinute(quietHoursStartMinute);
+    } else {
+      setAndroidHour(quietHoursEnd);
+      setAndroidMinute(quietHoursEndMinute);
+    }
     setShowQuietPicker(true);
   };
 
-  const getDateForHour = (hour: number) => {
+  const getDateForHourMinute = (hour: number, minute: number) => {
     const d = new Date();
-    d.setHours(hour, 0, 0, 0);
+    d.setHours(hour, minute, 0, 0);
     return d;
   };
 
   const handleQuietPickerConfirm = (_: any, selectedDate?: Date) => {
-    // Spinner kullanıldığı için Android'de veya iOS'te anında kapanmasın, sadece seçilen değeri modal kapandığında kaydedelim (okey butonuyla)
-    // Ancak onChange her döndüğünde anlık olarak state'i güncellesin:
     if (selectedDate) {
-      if (editingWhich === 'start') setQuietHoursStart(selectedDate.getHours());
-      else setQuietHoursEnd(selectedDate.getHours());
+      if (editingWhich === 'start') {
+        setQuietHoursStart(selectedDate.getHours());
+        setQuietHoursStartMinute(selectedDate.getMinutes());
+      } else {
+        setQuietHoursEnd(selectedDate.getHours());
+        setQuietHoursEndMinute(selectedDate.getMinutes());
+      }
     }
   };
 
@@ -128,7 +149,7 @@ export default function SettingsScreen() {
               <Text style={styles.settingIcon}>🌙</Text>
               <Text style={styles.settingLabel}>{t(lang, 'settings.quietStart')}</Text>
               <View style={styles.timeTag}>
-                <Text style={styles.timeTagText}>{padH(quietHoursStart)}:00</Text>
+                <Text style={styles.timeTagText}>{padH(quietHoursStart)}:{padM(quietHoursStartMinute)}</Text>
               </View>
             </TouchableOpacity>
             <Divider colors={colors} />
@@ -136,8 +157,34 @@ export default function SettingsScreen() {
               <Text style={styles.settingIcon}>☀️</Text>
               <Text style={styles.settingLabel}>{t(lang, 'settings.quietEnd')}</Text>
               <View style={styles.timeTag}>
-                <Text style={styles.timeTagText}>{padH(quietHoursEnd)}:00</Text>
+                <Text style={styles.timeTagText}>{padH(quietHoursEnd)}:{padM(quietHoursEndMinute)}</Text>
               </View>
+            </TouchableOpacity>
+            <Divider colors={colors} />
+            <SettingRow
+              colors={colors}
+              icon="⏰"
+              label={t(lang, 'settings.autoMarkMissed')}
+              subLabel={t(lang, 'settings.autoMarkMissedSub')}
+              hasSwitch
+              switchValue={autoMarkMissedAsTaken}
+              onSwitchChange={(val) => {
+                setAutoMarkMissedAsTaken(val);
+                scheduleEndOfDayMissedNotification(quietHoursStart, val, lang).catch(() => {});
+              }}
+            />
+            <Divider colors={colors} />
+            <TouchableOpacity
+              style={styles.settingRow}
+              onPress={async () => {
+                await scheduleTestNotification();
+                showAlert({ message: lang === 'tr' ? '✅ 5 saniye içinde test bildirimi gelecek!' : '✅ Test notification in 5 seconds!', type: 'success' });
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.settingIcon}>🧩</Text>
+              <Text style={styles.settingLabel}>{lang === 'tr' ? 'Bildirim Testi Gönder' : 'Send Test Notification'}</Text>
+              <Text style={{ fontSize: TYPOGRAPHY.fontSizeSm, color: colors.primary }}>→</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -211,37 +258,77 @@ export default function SettingsScreen() {
               <View style={{ marginBottom: SPACING.xl }}>
                 {Platform.OS === 'ios' ? (
                   <DateTimePicker
-                    value={editingWhich === 'start' ? getDateForHour(quietHoursStart) : getDateForHour(quietHoursEnd)}
+                    value={editingWhich === 'start'
+                      ? getDateForHourMinute(quietHoursStart, quietHoursStartMinute)
+                      : getDateForHourMinute(quietHoursEnd, quietHoursEndMinute)
+                    }
                     mode="time" display="spinner" is24Hour
                     onChange={(_, selectedDate) => {
                       if (selectedDate) {
-                        if (editingWhich === 'start') setQuietHoursStart(selectedDate.getHours());
-                        else setQuietHoursEnd(selectedDate.getHours());
+                        if (editingWhich === 'start') {
+                          setQuietHoursStart(selectedDate.getHours());
+                          setQuietHoursStartMinute(selectedDate.getMinutes());
+                        } else {
+                          setQuietHoursEnd(selectedDate.getHours());
+                          setQuietHoursEndMinute(selectedDate.getMinutes());
+                        }
                       }
                     }}
                     themeVariant={theme} textColor={colors.textPrimary}
                   />
                 ) : (
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: SPACING.xl }}>
-                   <View style={{ alignItems: 'center', width: 80 }}>
-                      <TouchableOpacity onPress={() => incrementHour(1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.sm }}><Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text></TouchableOpacity>
-                      <Text style={{ fontSize: 48, fontWeight: 'bold', color: colors.textPrimary }}>{androidHour.toString().padStart(2, '0')}</Text>
-                      <TouchableOpacity onPress={() => incrementHour(-1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.sm }}><Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text></TouchableOpacity>
-                   </View>
-                   <Text style={{ fontSize: 44, fontWeight: 'bold', color: colors.textPrimary, marginHorizontal: SPACING.xl }}>:</Text>
-                   <View style={{ alignItems: 'center', width: 80 }}>
-                      {/* Quiet hours focus purely on hours, minutes can be static 00 */}
-                      <View style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.sm, opacity: 0.2 }}><Text style={{ color: colors.textSecondary, fontSize: 24, fontWeight:'bold' }}>▲</Text></View>
-                      <Text style={{ fontSize: 48, fontWeight: 'bold', color: colors.textSecondary }}>00</Text>
-                      <View style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.sm, opacity: 0.2 }}><Text style={{ color: colors.textSecondary, fontSize: 24, fontWeight:'bold' }}>▼</Text></View>
-                   </View>
-                 </View>
+                    {/* Saat sütunu */}
+                    <View style={{ alignItems: 'center', width: 80 }}>
+                      <TouchableOpacity
+                        onPress={() => incrementHour(1)}
+                        style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.sm }}
+                      >
+                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text>
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 48, fontWeight: 'bold', color: colors.textPrimary }}>
+                        {androidHour.toString().padStart(2, '0')}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => incrementHour(-1)}
+                        style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.sm }}
+                      >
+                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <Text style={{ fontSize: 44, fontWeight: 'bold', color: colors.textPrimary, marginHorizontal: SPACING.xl }}>:</Text>
+
+                    {/* Dakika sütunu — artık AKTİF */}
+                    <View style={{ alignItems: 'center', width: 80 }}>
+                      <TouchableOpacity
+                        onPress={() => incrementMinute(1)}
+                        style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.sm }}
+                      >
+                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text>
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 48, fontWeight: 'bold', color: colors.textPrimary }}>
+                        {androidMinute.toString().padStart(2, '0')}
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => incrementMinute(-1)}
+                        style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.sm }}
+                      >
+                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 )}
               </View>
               <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => {
                 if (Platform.OS !== 'ios') {
-                  if (editingWhich === 'start') setQuietHoursStart(androidHour);
-                  else setQuietHoursEnd(androidHour);
+                  if (editingWhich === 'start') {
+                    setQuietHoursStart(androidHour);
+                    setQuietHoursStartMinute(androidMinute);
+                  } else {
+                    setQuietHoursEnd(androidHour);
+                    setQuietHoursEndMinute(androidMinute);
+                  }
                 }
                 setShowQuietPicker(false);
               }}>
@@ -333,6 +420,7 @@ interface SettingRowProps {
   colors: any;
   icon: string;
   label: string;
+  subLabel?: string;
   value?: string;
   valueColor?: string;
   isLink?: boolean;
@@ -342,18 +430,23 @@ interface SettingRowProps {
   onPress?: () => void;
 }
 
-function SettingRow({ colors, icon, label, value, valueColor, isLink, hasSwitch, switchValue, onSwitchChange, onPress }: SettingRowProps) {
+function SettingRow({ colors, icon, label, subLabel, value, valueColor, isLink, hasSwitch, switchValue, onSwitchChange, onPress }: SettingRowProps) {
   const rowStyles = StyleSheet.create({
     settingRow: { flexDirection: 'row', alignItems: 'center', padding: SPACING.lg, gap: SPACING.md },
     settingIcon: { fontSize: 20, width: 28 },
-    settingLabel: { flex: 1, fontSize: TYPOGRAPHY.fontSizeMd, color: colors.textPrimary },
+    labelCol: { flex: 1 },
+    settingLabel: { fontSize: TYPOGRAPHY.fontSizeMd, color: colors.textPrimary },
+    settingSubLabel: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.textMuted, marginTop: 2 },
     settingValue: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary },
   });
 
   return (
     <TouchableOpacity style={rowStyles.settingRow} onPress={onPress} disabled={!isLink && !hasSwitch} activeOpacity={0.7}>
       <Text style={rowStyles.settingIcon}>{icon}</Text>
-      <Text style={rowStyles.settingLabel}>{label}</Text>
+      <View style={rowStyles.labelCol}>
+        <Text style={rowStyles.settingLabel}>{label}</Text>
+        {subLabel ? <Text style={rowStyles.settingSubLabel}>{subLabel}</Text> : null}
+      </View>
       {hasSwitch ? (
         <Switch
           value={switchValue}

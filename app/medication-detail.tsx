@@ -1,23 +1,33 @@
 import { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  TouchableOpacity, ActivityIndicator, Alert,
+  TouchableOpacity, ActivityIndicator, Modal,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { getMedicationInfo } from '../services/gemini';
 import { useStore } from '../store/useStore';
-import { updateMedication } from '../services/firestore';
+import { updateMedication, clearMedicationLogs } from '../services/firestore';
 import { cancelMedicationNotifications } from '../services/notifications';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
 import { formatDate } from '../utils/date';
 
+// Kaç günlük geçmiş gösterilecek
+const TRACKING_DAYS_COUNT = 30;
+
 export default function MedicationDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { medications: allMedications, updateMedication: updateMedInStore, language, theme, showAlert } = useStore();
+  const {
+    medications: allMedications,
+    medicationLogs,
+    updateMedication: updateMedInStore,
+    removeMedicationLogsForMed,
+    language, theme, showAlert,
+  } = useStore();
   const [medication, setMedication] = useState<any | null>(null);
   const [aiInfo, setAiInfo] = useState<string | null>(null);
   const [isLoadingInfo, setIsLoadingInfo] = useState(false);
+  const [showTrackingModal, setShowTrackingModal] = useState(false);
 
   const colors = getThemeColors(theme);
   const styles = getStyles(colors);
@@ -73,6 +83,30 @@ export default function MedicationDetailScreen() {
     });
   };
 
+  const handleClearHistory = () => {
+    if (!medication) return;
+    showAlert({
+      message: t(lang, 'medicationDetail.clearHistoryConfirm'),
+      type: 'warning',
+      buttons: [
+        { text: t(lang, 'settings.cancel'), style: 'cancel' },
+        {
+          text: t(lang, 'medicationDetail.clearHistory'),
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearMedicationLogs(medication.id);
+              removeMedicationLogsForMed(medication.id);
+              showAlert({ message: t(lang, 'medicationDetail.clearHistorySuccess'), type: 'success' });
+            } catch (err) {
+              showAlert({ message: lang === 'tr' ? 'Geçmiş temizlenirken hata oluştu.' : 'Error clearing history.', type: 'danger' });
+            }
+          }
+        }
+      ]
+    });
+  };
+
   const getTranslatedUnit = (u: string) => {
     if (u === 'tablet' || u === 'kapsül' || u === 'damla') {
       return t(lang, `medicationOptions.units.${u}`);
@@ -85,6 +119,49 @@ export default function MedicationDetailScreen() {
     return t(lang, `medicationOptions.types.${value}`);
   };
 
+  // Son TRACKING_DAYS_COUNT günlük geçmişi hesapla
+  const buildDailyTracking = () => {
+    if (!medication) return [];
+    const medLogs = medicationLogs.filter((l) => l.medicationId === medication.id);
+    const days: { date: string; label: string; slots: { time: string; status: 'taken' | 'missed' | 'none' }[] }[] = [];
+
+    for (let i = 0; i < TRACKING_DAYS_COUNT; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+
+      // Aralıklı ilaç kontrolü
+      if (medication.intervalDays && medication.intervalDays > 1) {
+        const start = new Date(medication.startDate).setHours(0, 0, 0, 0);
+        const dayTs = d.setHours(0, 0, 0, 0);
+        const daysDiff = Math.floor((dayTs - start) / (1000 * 60 * 60 * 24));
+        if (daysDiff >= 0 && daysDiff % medication.intervalDays !== 0) continue;
+        if (daysDiff < 0) continue;
+      }
+
+      // İlaç başlangıcından önce gösterme
+      if (dateStr < medication.startDate) break;
+
+      const day = d.getDate().toString().padStart(2, '0');
+      const month = (d.getMonth() + 1).toString().padStart(2, '0');
+      const label = `${day}.${month}`;
+
+      const slots = (medication.times || []).map((time: string) => {
+        const log = medLogs.find(
+          (l) => l.expectedTime === time && l.takenAt.startsWith(dateStr)
+        );
+        return {
+          time,
+          status: log ? log.status : 'none' as 'taken' | 'missed' | 'none',
+        };
+      });
+
+      days.push({ date: dateStr, label, slots });
+    }
+
+    return days;
+  };
+
   if (!medication) {
     return (
       <View style={styles.centered}>
@@ -93,6 +170,8 @@ export default function MedicationDetailScreen() {
       </View>
     );
   }
+
+  const trackingDays = buildDailyTracking();
 
   return (
     <View style={styles.container}>
@@ -147,6 +226,28 @@ export default function MedicationDetailScreen() {
           </TouchableOpacity>
         )}
 
+        {/* Gün Bazlı Alım Takibi Butonu */}
+        <TouchableOpacity
+          style={styles.trackingButton}
+          onPress={() => setShowTrackingModal(true)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.trackingButtonIcon}>📊</Text>
+          <View>
+            <Text style={styles.trackingButtonText}>{t(lang, 'medicationDetail.dailyTracking')}</Text>
+            <Text style={styles.trackingButtonSub}>{lang === 'tr' ? `Son ${TRACKING_DAYS_COUNT} gün` : `Last ${TRACKING_DAYS_COUNT} days`}</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Geçmişi Temizle Butonu */}
+        <TouchableOpacity
+          style={styles.clearHistoryButton}
+          onPress={handleClearHistory}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.clearHistoryText}>🗑️ {t(lang, 'medicationDetail.clearHistory')}</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={[styles.infoButton, isLoadingInfo && styles.infoButtonLoading]}
           onPress={handleGetInfo}
@@ -188,6 +289,75 @@ export default function MedicationDetailScreen() {
 
         <View style={{ height: SPACING.huge }} />
       </ScrollView>
+
+      {/* Gün Bazlı Takip Modalı */}
+      <Modal
+        transparent
+        animationType="slide"
+        visible={showTrackingModal}
+        onRequestClose={() => setShowTrackingModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalSheet, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>
+                {t(lang, 'medicationDetail.trackingTitle')} — {medication.name}
+              </Text>
+              <TouchableOpacity onPress={() => setShowTrackingModal(false)}>
+                <Text style={{ fontSize: 22, color: colors.textMuted }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Lejand */}
+            <View style={styles.legendRow}>
+              <View style={styles.legendItem}>
+                <Text style={styles.legendIcon}>✅</Text>
+                <Text style={[styles.legendLabel, { color: colors.textSecondary }]}>{t(lang, 'medicationDetail.statusTaken')}</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <Text style={styles.legendIcon}>❌</Text>
+                <Text style={[styles.legendLabel, { color: colors.textSecondary }]}>{t(lang, 'medicationDetail.statusMissed')}</Text>
+              </View>
+              <View style={styles.legendItem}>
+                <Text style={styles.legendIcon}>⬜</Text>
+                <Text style={[styles.legendLabel, { color: colors.textSecondary }]}>{t(lang, 'medicationDetail.statusNoRecord')}</Text>
+              </View>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
+              {trackingDays.length === 0 ? (
+                <View style={{ alignItems: 'center', padding: SPACING.xxl }}>
+                  <Text style={{ fontSize: 36 }}>📭</Text>
+                  <Text style={{ color: colors.textSecondary, marginTop: SPACING.sm }}>{t(lang, 'medicationDetail.noHistory')}</Text>
+                </View>
+              ) : (
+                trackingDays.map((day) => (
+                  <View key={day.date} style={[styles.trackingRow, { borderBottomColor: colors.surfaceBorder }]}>
+                    <Text style={[styles.trackingDate, { color: colors.textSecondary }]}>{day.label}</Text>
+                    <View style={styles.trackingSlots}>
+                      {day.slots.map((slot, si) => (
+                        <View key={si} style={styles.trackingSlot}>
+                          <Text style={styles.trackingSlotTime}>{slot.time}</Text>
+                          <Text style={styles.trackingSlotIcon}>
+                            {slot.status === 'taken' ? '✅' : slot.status === 'missed' ? '❌' : '⬜'}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.modalCloseBtn, { backgroundColor: colors.primary }]}
+              onPress={() => setShowTrackingModal(false)}
+            >
+              <Text style={styles.modalCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -272,8 +442,51 @@ const getStyles = (colors: any) => StyleSheet.create({
   aiDisclaimerText: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.warning },
   finishButton: {
     backgroundColor: colors.danger + '22', borderRadius: RADIUS.lg,
-    padding: SPACING.lg, alignItems: 'center', marginBottom: SPACING.xl,
+    padding: SPACING.lg, alignItems: 'center',
     borderWidth: 1, borderColor: colors.danger + '44',
   },
   finishButtonText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.danger },
+  trackingButton: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
+    backgroundColor: colors.primary + '18', borderRadius: RADIUS.lg,
+    padding: SPACING.lg, borderWidth: 1, borderColor: colors.primary + '44',
+  },
+  trackingButtonIcon: { fontSize: 28 },
+  trackingButtonText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.primary },
+  trackingButtonSub: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.textMuted, marginTop: 2 },
+  clearHistoryButton: {
+    backgroundColor: colors.danger + '11', borderRadius: RADIUS.lg,
+    padding: SPACING.lg, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.danger + '22',
+  },
+  clearHistoryText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.danger, fontWeight: TYPOGRAPHY.fontWeightMedium },
+  // Modal
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.82)', justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
+    padding: SPACING.xxl, paddingBottom: 40,
+    borderWidth: 1,
+    maxHeight: '85%',
+  },
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md,
+  },
+  modalTitle: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, flex: 1 },
+  legendRow: { flexDirection: 'row', gap: SPACING.lg, marginBottom: SPACING.md, paddingVertical: SPACING.sm },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  legendIcon: { fontSize: 16 },
+  legendLabel: { fontSize: TYPOGRAPHY.fontSizeXs },
+  trackingRow: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.sm,
+    borderBottomWidth: 1, gap: SPACING.md,
+  },
+  trackingDate: { fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightMedium, width: 40 },
+  trackingSlots: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
+  trackingSlot: { alignItems: 'center', gap: 2 },
+  trackingSlotTime: { fontSize: 10, color: '#888' },
+  trackingSlotIcon: { fontSize: 18 },
+  modalCloseBtn: { borderRadius: RADIUS.lg, padding: SPACING.lg, alignItems: 'center', marginTop: SPACING.lg },
+  modalCloseBtnText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: '#fff' },
 });

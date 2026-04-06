@@ -59,7 +59,10 @@ interface AppState {
   globalMedications: string[];
   quietHoursStart: number;
   quietHoursEnd: number;
+  quietHoursStartMinute: number;
+  quietHoursEndMinute: number;
   notificationsEnabled: boolean;
+  autoMarkMissedAsTaken: boolean;
   setUser: (user: User | null) => void;
   setProfiles: (profiles: Profile[]) => void;
   addProfile: (profile: Profile) => void;
@@ -70,6 +73,7 @@ interface AppState {
   updateMedication: (id: string, data: Partial<Medication>) => void;
   setMedicationLogs: (logs: MedicationLog[]) => void;
   addMedicationLogState: (log: MedicationLog) => void;
+  removeMedicationLogsForMed: (medicationId: string) => void;
   setActiveProfileId: (id: string | null) => void;
   setLanguage: (lang: 'tr' | 'en') => void;
   setTheme: (theme: 'dark' | 'light') => void;
@@ -77,7 +81,10 @@ interface AppState {
   setGlobalMedications: (meds: string[]) => void;
   setQuietHoursStart: (time: number) => void;
   setQuietHoursEnd: (time: number) => void;
+  setQuietHoursStartMinute: (minute: number) => void;
+  setQuietHoursEndMinute: (minute: number) => void;
   setNotificationsEnabled: (enabled: boolean) => void;
+  setAutoMarkMissedAsTaken: (enabled: boolean) => void;
   logout: () => void;
   showAlert: (config: AlertConfig) => void;
   hideAlert: () => void;
@@ -98,7 +105,10 @@ export const useStore = create<AppState>()(
       globalMedications: [],
       quietHoursStart: 23,
       quietHoursEnd: 7,
+      quietHoursStartMinute: 0,
+      quietHoursEndMinute: 0,
       notificationsEnabled: true,
+      autoMarkMissedAsTaken: false,
       setUser: (user) => set({ user }),
       setProfiles: (profiles) => set({ profiles }),
       addProfile: (profile) => set((state) => ({ profiles: [...state.profiles, profile] })),
@@ -115,6 +125,9 @@ export const useStore = create<AppState>()(
       })),
       setMedicationLogs: (logs) => set({ medicationLogs: logs }),
       addMedicationLogState: (log) => set((state) => ({ medicationLogs: [...(state.medicationLogs || []), log] })),
+      removeMedicationLogsForMed: (medicationId) => set((state) => ({
+        medicationLogs: (state.medicationLogs || []).filter((l) => l.medicationId !== medicationId)
+      })),
       setActiveProfileId: (id) => set({ activeProfileId: id }),
       setLanguage: (lang) => set({ language: lang }),
       setTheme: (theme) => set({ theme }),
@@ -122,7 +135,10 @@ export const useStore = create<AppState>()(
       setGlobalMedications: (meds) => set({ globalMedications: meds }),
       setQuietHoursStart: (time) => set({ quietHoursStart: time }),
       setQuietHoursEnd: (time) => set({ quietHoursEnd: time }),
+      setQuietHoursStartMinute: (minute) => set({ quietHoursStartMinute: minute }),
+      setQuietHoursEndMinute: (minute) => set({ quietHoursEndMinute: minute }),
       setNotificationsEnabled: (enabled) => set({ notificationsEnabled: enabled }),
+      setAutoMarkMissedAsTaken: (enabled) => set({ autoMarkMissedAsTaken: enabled }),
       logout: () => set({ user: null }),
       showAlert: (alert) => set({ alert }),
       hideAlert: () => set({ alert: null }),

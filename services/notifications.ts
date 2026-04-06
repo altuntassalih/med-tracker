@@ -1,14 +1,24 @@
 import { Platform } from 'react-native';
 import { useStore } from '../store/useStore';
 
-// Sabitler
+// ---- Sabitler ----
 const NOTIFICATION_LEAD_MINUTES = 5;
 const NOTIFICATION_CHANNEL_ID = 'med-tracker-default';
+const END_OF_DAY_NOTIF_DATA_KEY = 'end-of-day-missed-notif';
+const END_OF_DAY_LEAD_MINUTES = 5;
 
+// ---- expo-notifications dinamik import ----
+// Hem Expo Go hem de standalone build'de çalışacak şekilde
 let Notifications: any = null;
+let SchedulableTriggerInputTypes: any = null;
+let AndroidImportance: any = null;
 
 try {
-  Notifications = require('expo-notifications');
+  const notifModule = require('expo-notifications');
+  Notifications = notifModule;
+  SchedulableTriggerInputTypes = notifModule.SchedulableTriggerInputTypes;
+  AndroidImportance = notifModule.AndroidImportance;
+
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
       shouldShowAlert: true,
@@ -18,14 +28,36 @@ try {
       shouldShowList: true,
     }),
   });
-} catch (err) {
-  // Bildirim handler yüklenemedi
+} catch (_err) {
+  // expo-notifications yüklenemedi — Expo Go web'de normal
 }
 
+// ---- Kanal oluşturma (Android 8+) ----
+// İzin istemeden ÖNCE çağrılmalı
+const ensureAndroidChannel = async () => {
+  if (!Notifications || Platform.OS !== 'android') return;
+  try {
+    await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNEL_ID, {
+      name: 'İlaç Hatırlatıcı',
+      importance: AndroidImportance?.MAX ?? 5,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#6C63FF',
+      sound: 'default',
+      enableVibrate: true,
+    });
+  } catch (_err) {
+    // Kanal oluşturma hatası — sessizce geç
+  }
+};
+
+// ---- İzin isteme ----
 export const requestNotificationPermission = async (): Promise<boolean> => {
   if (!Notifications) return false;
 
   try {
+    // Android 8+ için önce kanal oluştur (izin dialog'u için gerekli)
+    await ensureAndroidChannel();
+
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
 
@@ -34,26 +66,16 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
       finalStatus = status;
     }
 
-    if (finalStatus !== 'granted') return false;
-
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNEL_ID, {
-        name: 'İlaç Hatırlatıcı',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#6C63FF',
-        sound: 'default',
-      });
-    }
-    return true;
-  } catch (err) {
+    return finalStatus === 'granted';
+  } catch (_err) {
     return false;
   }
 };
 
 /**
- * Verilen saat (HH:MM) için NOTIFICATION_LEAD_MINUTES dk öncesine bildirim zamanlar.
- * Expo'nun `type: 'daily'` tetikleyicisini kullanır — bu en güvenilir yaklaşımdır.
+ * Verilen saat (HH:MM) için NOTIFICATION_LEAD_MINUTES dk öncesine günlük tekrar bildirim zamanlar.
+ *
+ * SDK 54 doğru trigger formatı: SchedulableTriggerInputTypes.DAILY + channelId trigger'da
  */
 export const scheduleMedicationNotification = async (
   medicationId: string,
@@ -69,51 +91,52 @@ export const scheduleMedicationNotification = async (
   if (!state.notificationsEnabled) return 'disabled';
 
   try {
+    await ensureAndroidChannel();
+
     const [originalHour, originalMinute] = time.split(':').map(Number);
 
-    // İlaç saatinden NOTIFICATION_LEAD_MINUTES dk öncesini dakika cinsinden hesapla
+    // İlaç saatinden NOTIFICATION_LEAD_MINUTES dk öncesini hesapla
     let totalMinutes = originalHour * 60 + originalMinute - NOTIFICATION_LEAD_MINUTES;
-
-    // Gece yarısı geçişi: negatifse bir gün öncesinin sonuna al (23:55 gibi)
-    if (totalMinutes < 0) {
-      totalMinutes += 24 * 60;
-    }
+    if (totalMinutes < 0) totalMinutes += 24 * 60;
 
     const triggerHour = Math.floor(totalMinutes / 60);
     const triggerMinute = totalMinutes % 60;
 
-    // Sessiz saat kontrolü — tetikleyici saat üzerinden kontrol et
+    // Sessiz saat kontrolü
     const quietStart = state.quietHoursStart;
     const quietEnd = state.quietHoursEnd;
     let isQuiet = false;
 
     if (quietStart < quietEnd) {
-      // Örn: 23:00 - 07:00 gibi gece yarısı geçişi YOK
       if (triggerHour >= quietStart && triggerHour < quietEnd) isQuiet = true;
     } else if (quietStart > quietEnd) {
-      // Örn: 23:00 - 07:00: gece yarısı geçişi VAR
       if (triggerHour >= quietStart || triggerHour < quietEnd) isQuiet = true;
     }
 
     if (isQuiet) return 'quiet_hours';
 
-    // Expo SDK 50+ için doğru trigger formatı: `type: 'daily'`
-    let trigger: any = {
-      type: 'daily',
-      hour: triggerHour,
-      minute: triggerMinute,
-    };
+    // SDK 54 doğru trigger formatı
+    // channelId trigger içinde (Android 8+), NOT content içinde
+    let trigger: any;
 
-    // Haftalık tekrar için weekday bazlı tetikleyici
     if (intervalDays === 7) {
-      const startD = new Date(startDate + 'T12:00:00'); // Saat dilimi hatalarını önlemek için öğlen
-      // expo-notifications weekday: 1 = Pazar, 2 = Pazartesi ... 7 = Cumartesi
-      const weekday = startD.getDay() + 1;
+      // Haftalık tetikleyici
+      const startD = new Date(startDate + 'T12:00:00');
+      const weekday = startD.getDay() + 1; // expo: 1=Pazar, 2=Pazartesi...
       trigger = {
-        type: 'weekly',
+        type: SchedulableTriggerInputTypes?.WEEKLY ?? 'weekly',
         weekday,
         hour: triggerHour,
         minute: triggerMinute,
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+      };
+    } else {
+      // Günlük tetikleyici
+      trigger = {
+        type: SchedulableTriggerInputTypes?.DAILY ?? 'daily',
+        hour: triggerHour,
+        minute: triggerMinute,
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
       };
     }
 
@@ -122,8 +145,10 @@ export const scheduleMedicationNotification = async (
         title: '💊 İlaç Vakti Yaklaşıyor!',
         body: `${medicationName} (${dosage}) için ${NOTIFICATION_LEAD_MINUTES} dakika kaldı.`,
         data: { medicationId },
-        sound: true,
-        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+        // sound: 'default' string olarak — true geçersiz
+        sound: 'default',
+        sticky: false,
+        priority: 'max',
       },
       trigger,
     });
@@ -144,7 +169,7 @@ export const cancelMedicationNotifications = async (medicationId: string): Promi
         await Notifications.cancelScheduledNotificationAsync(notif.identifier);
       }
     }
-  } catch (err) {
+  } catch (_err) {
     // Bildirim silme hatası
   }
 };
@@ -153,7 +178,97 @@ export const cancelAllNotifications = async (): Promise<void> => {
   if (!Notifications) return;
   try {
     await Notifications.cancelAllScheduledNotificationsAsync();
-  } catch (err) {
+  } catch (_err) {
     // Tüm bildirimleri silme hatası
+  }
+};
+
+/**
+ * Sessiz saatlerin başlangıcından END_OF_DAY_LEAD_MINUTES dk önce
+ * "işaretlenmemiş ilaçlarınız var" bildirimi zamanlar.
+ *
+ * autoMarkMissedAsTaken=true ise bildirim zamanlanmaz (otomatik işaretlenecek).
+ */
+export const scheduleEndOfDayMissedNotification = async (
+  quietHoursStart: number,
+  autoMarkMissedAsTaken: boolean,
+  lang: 'tr' | 'en' = 'tr'
+): Promise<void> => {
+  if (!Notifications) return;
+
+  // Önceki gün sonu bildirimlerini iptal et
+  try {
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    for (const notif of scheduled) {
+      if (notif.content.data?.notifType === END_OF_DAY_NOTIF_DATA_KEY) {
+        await Notifications.cancelScheduledNotificationAsync(notif.identifier);
+      }
+    }
+  } catch (_err) { /* no-op */ }
+
+  // autoMarkMissedAsTaken=true ise bildirim gerekmez
+  if (autoMarkMissedAsTaken) return;
+
+  const state = useStore.getState();
+  if (!state.notificationsEnabled) return;
+
+  await ensureAndroidChannel();
+
+  // Sessiz saat başlangıcından 5 dk öncesi
+  let totalMinutes = quietHoursStart * 60 - END_OF_DAY_LEAD_MINUTES;
+  if (totalMinutes < 0) totalMinutes += 24 * 60;
+
+  const triggerHour = Math.floor(totalMinutes / 60);
+  const triggerMinute = totalMinutes % 60;
+
+  const title = lang === 'tr' ? '⏰ Unutmayın!' : '⏰ Reminder!';
+  const body = lang === 'tr'
+    ? 'Bugün içinde alınmamış ilaçlarınız var. Sessiz saatler başlamadan önce kontrol edin.'
+    : 'You have medications you have not marked today. Check before quiet hours begin.';
+
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        data: { notifType: END_OF_DAY_NOTIF_DATA_KEY },
+        sound: 'default',
+        priority: 'max',
+      },
+      trigger: {
+        type: SchedulableTriggerInputTypes?.DAILY ?? 'daily',
+        hour: triggerHour,
+        minute: triggerMinute,
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+      },
+    });
+  } catch (_err) {
+    // Bildirim zamanlama hatası
+  }
+};
+
+/**
+ * Test amaçlı: 5 saniye sonra bildirim gönderir.
+ * Build aldıktan sonra çalışıp çalışmadığını doğrulamak için kullanın.
+ */
+export const scheduleTestNotification = async (): Promise<void> => {
+  if (!Notifications) return;
+  await ensureAndroidChannel();
+  try {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: '✅ Bildirim Testi',
+        body: 'Med-Tracker bildirimleri çalışıyor!',
+        sound: 'default',
+        data: { test: true },
+      },
+      trigger: {
+        type: SchedulableTriggerInputTypes?.TIME_INTERVAL ?? 'timeInterval',
+        seconds: 5,
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+      },
+    });
+  } catch (_err) {
+    // Test bildirim hatası
   }
 };

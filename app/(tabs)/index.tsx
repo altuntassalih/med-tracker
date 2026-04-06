@@ -17,6 +17,10 @@ import { t, LanguageCode } from '../../constants/translations';
 
 const { width } = Dimensions.get('window');
 
+// Eşik sabitleri
+const OVERDUE_THRESHOLD_MINUTES = 30;  // 30 dk gecikmeyi "süresi geçti" say
+const UPCOMING_WINDOW_MINUTES = 240;   // 240 dk içindekiler "yaklaşan"
+
 function getTodayGreeting(lang: LanguageCode): string {
   const hour = new Date().getHours();
   if (hour >= 6 && hour < 12) return t(lang, 'greeting.morning');
@@ -72,6 +76,7 @@ export default function HomeScreen() {
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
     let upcoming: any[] = [];
+    let overdue: any[] = [];
     let completed: any[] = [];
 
     medications.forEach((med) => {
@@ -88,7 +93,8 @@ export default function HomeScreen() {
         const isTakenToday = logs.some((l) => 
           l.medicationId === med.id && 
           l.expectedTime === time && 
-          l.takenAt.startsWith(todayStr)
+          l.takenAt.startsWith(todayStr) &&
+          l.status === 'taken'
         );
 
         if (isTakenToday) return;
@@ -101,7 +107,11 @@ export default function HomeScreen() {
         if (diff < -720) diff += 1440;
         else if (diff > 720) diff -= 1440;
 
-        if (diff >= -30 && diff <= 240) {
+        if (diff < -OVERDUE_THRESHOLD_MINUTES) {
+          // Süresi 30 dk'dan fazla geçmiş → "Süresi Geçti"
+          overdue.push({ med, time, timeMinutes, diff });
+        } else if (diff >= -OVERDUE_THRESHOLD_MINUTES && diff <= UPCOMING_WINDOW_MINUTES) {
+          // -30 ile +240 dakika arası → "Yaklaşan"
           upcoming.push({ med, time, timeMinutes, diff });
         }
       });
@@ -112,7 +122,8 @@ export default function HomeScreen() {
         const isTakenToday = logs.some((l) => 
           l.medicationId === med.id && 
           l.expectedTime === time && 
-          l.takenAt.startsWith(todayStr)
+          l.takenAt.startsWith(todayStr) &&
+          l.status === 'taken'
         );
         if (isTakenToday) {
           completed.push({ med, time });
@@ -122,11 +133,12 @@ export default function HomeScreen() {
 
     return {
       upcoming: upcoming.sort((a, b) => a.diff - b.diff),
+      overdue: overdue.sort((a, b) => a.diff - b.diff),
       completed,
     };
   };
 
-  const { upcoming: upcomingMeds, completed: completedMeds } = getMedicationLists();
+  const { upcoming: upcomingMeds, overdue: overdueMeds, completed: completedMeds } = getMedicationLists();
 
   return (
     <View style={styles.container}>
@@ -185,6 +197,42 @@ export default function HomeScreen() {
             <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.upcoming')}</Text>
           </View>
         </View>
+
+        {/* Süresi Geçmiş İlaçlar */}
+        {overdueMeds.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.overdueHeader}>
+              <Text style={styles.overdueTitle}>⏰ {t(language as LanguageCode, 'home.overdueTitle')}</Text>
+              <View style={styles.overdueBadge}>
+                <Text style={styles.overdueBadgeText}>{overdueMeds.length}</Text>
+              </View>
+            </View>
+            {overdueMeds.map((item, i) => {
+              const minsAgo = Math.abs(item.diff);
+              const hoursAgo = Math.floor(minsAgo / 60);
+              const minsLeft = minsAgo % 60;
+              const timeAgoStr = hoursAgo > 0
+                ? `${hoursAgo}s ${minsLeft}dk önce`
+                : `${minsAgo}dk önce`;
+              return (
+                <View key={i} style={styles.overdueCard}>
+                  <View style={styles.overdueTimeChip}>
+                    <Text style={styles.overdueTimeText}>{item.time}</Text>
+                  </View>
+                  <View style={styles.upcomingInfo}>
+                    <Text style={styles.upcomingName}>{item.med.name}</Text>
+                    <Text style={styles.upcomingDose}>{item.med.dosage} {item.med.unit}</Text>
+                    <Text style={styles.overdueAgo}>{timeAgoStr}</Text>
+                  </View>
+                  <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time)}>
+                    <Text style={styles.takeBtnEmoji}>✓</Text>
+                    <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        )}
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t(language as LanguageCode, 'home.upcomingTitle')}</Text>
@@ -338,6 +386,31 @@ const getStyles = (colors: any) => StyleSheet.create({
   },
   emptyEmoji: { fontSize: 36 },
   emptyText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary },
+  // Süresi Geçenler
+  overdueHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.md,
+  },
+  overdueTitle: {
+    fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightSemiBold, color: colors.danger,
+  },
+  overdueBadge: {
+    backgroundColor: colors.danger, borderRadius: RADIUS.full,
+    minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  overdueBadgeText: { fontSize: TYPOGRAPHY.fontSizeXs, fontWeight: TYPOGRAPHY.fontWeightBold, color: '#fff' },
+  overdueCard: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
+    backgroundColor: colors.danger + '11', borderRadius: RADIUS.lg,
+    padding: SPACING.md, marginBottom: SPACING.sm,
+    borderWidth: 1, borderColor: colors.danger + '44',
+  },
+  overdueTimeChip: {
+    paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs,
+    borderRadius: RADIUS.sm, backgroundColor: colors.danger + '22',
+  },
+  overdueTimeText: { fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.danger },
+  overdueAgo: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.danger, fontWeight: TYPOGRAPHY.fontWeightMedium, marginTop: 2 },
   upcomingCard: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
     backgroundColor: colors.surfaceElevated, borderRadius: RADIUS.lg,
