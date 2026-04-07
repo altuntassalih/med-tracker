@@ -170,7 +170,7 @@ export default function SettingsScreen() {
               switchValue={autoMarkMissedAsTaken}
               onSwitchChange={(val) => {
                 setAutoMarkMissedAsTaken(val);
-                scheduleEndOfDayMissedNotification(quietHoursStart, val, lang).catch(() => {});
+                scheduleEndOfDayMissedNotification(quietHoursStart, quietHoursStartMinute, val, lang === 'tr' ? 'tr' : 'en').catch(() => {});
               }}
             />
             <Divider colors={colors} />

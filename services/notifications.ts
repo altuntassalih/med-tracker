@@ -82,6 +82,7 @@ export const scheduleMedicationNotification = async (
   medicationName: string,
   dosage: string,
   time: string,
+  lang: 'tr' | 'en' = 'tr',
   intervalDays: number = 1,
   startDate: string = new Date().toISOString().split('T')[0]
 ): Promise<string> => {
@@ -156,14 +157,18 @@ export const scheduleMedicationNotification = async (
     // TEMPORARY LOG: Silinecek
     console.log(`[Notification] Scheduled: ${medicationName} at ${triggerHour}:${triggerMinute} (Exact: true, Repeats: true)`);
 
+    // Eğer planlanan zaman şu anki zamandan çok yakınsa veya geçmişse (bugün için), 
+    // Expo genelde bunu yarın için planlar. Ancak anlık tetiklenmeyi önlemek için
+    // trigger nesnesinin doğruluğundan emin oluyoruz.
+    
     const identifier = await Notifications.scheduleNotificationAsync({
       content: {
-        title: '💊 İlaç Vakti Yaklaşıyor!',
-        body: `${medicationName} (${dosage}) için ${NOTIFICATION_LEAD_MINUTES} dakika kaldı.`,
+        title: lang === 'tr' ? '💊 İlaç Vakti Yaklaşıyor!' : '💊 Medication Time Approaching!',
+        body: lang === 'tr' 
+          ? `${medicationName} (${dosage}) için ${NOTIFICATION_LEAD_MINUTES} dakika kaldı.`
+          : `${NOTIFICATION_LEAD_MINUTES} minutes left for ${medicationName} (${dosage}).`,
         data: { medicationId },
-        // sound: 'default' string olarak — true geçersiz
         sound: 'default',
-        sticky: false,
         priority: 'max',
       },
       trigger,
@@ -207,6 +212,7 @@ export const cancelAllNotifications = async (): Promise<void> => {
  */
 export const scheduleEndOfDayMissedNotification = async (
   quietHoursStart: number,
+  quietHoursStartMinute: number,
   autoMarkMissedAsTaken: boolean,
   lang: 'tr' | 'en' = 'tr'
 ): Promise<void> => {
@@ -230,17 +236,29 @@ export const scheduleEndOfDayMissedNotification = async (
 
   await ensureAndroidChannel();
 
-  // Sessiz saat başlangıcından 5 dk öncesi
-  let totalMinutes = quietHoursStart * 60 - END_OF_DAY_LEAD_MINUTES;
-  if (totalMinutes < 0) totalMinutes += 24 * 60;
-
-  const triggerHour = Math.floor(totalMinutes / 60);
-  const triggerMinute = totalMinutes % 60;
+  // Kullanıcı İsteği: 23:59'da bildirim at, eğer sessiz saatler içinde değilse.
+  // Sessiz saatler 23:59'dan önce başlıyorsa, sessiz saatlerden 5 dk önce at.
+  
+  let targetHour = 23;
+  let targetMinute = 59;
+  
+  const quietStartTotalMin = quietHoursStart * 60 + quietHoursStartMinute;
+  const targetTotalMin = 23 * 60 + 59;
+  
+  // Eğer sessiz saatler 00:00'dan önce başlıyorsa (örn 22:00) 
+  // ve hedefimiz (23:59) bu aralığa düşüyorsa
+  if (quietStartTotalMin < targetTotalMin && quietStartTotalMin > 0) {
+    // Sessiz saat başlangıcından 5 dk önce
+    let totalMinutes = quietStartTotalMin - END_OF_DAY_LEAD_MINUTES;
+    if (totalMinutes < 0) totalMinutes += 24 * 60;
+    targetHour = Math.floor(totalMinutes / 60);
+    targetMinute = totalMinutes % 60;
+  }
 
   const title = lang === 'tr' ? '⏰ Unutmayın!' : '⏰ Reminder!';
   const body = lang === 'tr'
-    ? 'Bugün içinde alınmamış ilaçlarınız var. Sessiz saatler başlamadan önce kontrol edin.'
-    : 'You have medications you have not marked today. Check before quiet hours begin.';
+    ? 'Bugün içinde henüz işaretlenmemiş ilaçlarınız var. Lütfen kontrol edin.'
+    : 'You have medications you have not marked today. Please check.';
 
   try {
     await Notifications.scheduleNotificationAsync({
@@ -252,8 +270,8 @@ export const scheduleEndOfDayMissedNotification = async (
         priority: 'max',
       },
       trigger: {
-        hour: triggerHour,
-        minute: triggerMinute,
+        hour: targetHour,
+        minute: targetMinute,
         repeats: true,
         ...(Platform.OS === 'android' && { 
           channelId: NOTIFICATION_CHANNEL_ID,
@@ -261,6 +279,7 @@ export const scheduleEndOfDayMissedNotification = async (
         }),
       },
     });
+    console.log(`[Notification] EndOfDay scheduled at ${targetHour}:${targetMinute}`);
   } catch (_err) {
     // Bildirim zamanlama hatası
   }

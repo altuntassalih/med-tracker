@@ -9,7 +9,7 @@ import {
   Dimensions,
   Image,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useStore } from '../../store/useStore';
 import { getMedications, Medication, addMedicationLog, MedicationLog } from '../../services/firestore';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
@@ -49,8 +49,20 @@ export default function HomeScreen() {
   const medications = (allMedications || []).filter(m => m.profileId === activeProfile?.id && m.isActive !== false);
   const logs = (medicationLogs || []).filter(l => l.profileId === activeProfile?.id);
 
-  const getTodayStr = () => new Date().toISOString().split('T')[0];
+  const getTodayStr = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day = d.getDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
   const todayStr = getTodayStr();
+
+  useFocusEffect(
+    useCallback(() => {
+      onRefresh();
+    }, [])
+  );
 
   const handleTakeMedication = async (medId: string, time: string) => {
     if (!activeProfile?.id) return;
@@ -189,8 +201,8 @@ export default function HomeScreen() {
             <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.activeMed')}</Text>
           </View>
           <View style={[styles.statCard, { borderLeftColor: colors.secondary }]}>
-            <Text style={styles.statValue}>{medications.reduce((s, m) => s + m.times.length, 0)}</Text>
-            <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.dailyDose')}</Text>
+            <Text style={styles.statValue}>{completedMeds.length}</Text>
+            <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.completed')}</Text>
           </View>
           <View style={[styles.statCard, { borderLeftColor: colors.accent }]}>
             <Text style={styles.statValue}>{upcomingMeds.length}</Text>

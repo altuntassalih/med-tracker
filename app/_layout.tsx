@@ -8,6 +8,7 @@ import { getProfiles, getMedications, getMedicationLogs, addMedicationLog } from
 import {
   requestNotificationPermission,
   scheduleMedicationNotification,
+  cancelMedicationNotifications,
   cancelAllNotifications,
   scheduleEndOfDayMissedNotification,
 } from '../services/notifications';
@@ -105,6 +106,7 @@ export default function RootLayout() {
     if (notificationsEnabled) {
       scheduleEndOfDayMissedNotification(
         state.quietHoursStart,
+        state.quietHoursStartMinute,
         state.autoMarkMissedAsTaken,
         state.language as 'tr' | 'en'
       ).catch(() => {});
@@ -170,6 +172,7 @@ export default function RootLayout() {
                     const hasPermission = await requestNotificationPermission();
                     if (hasPermission) {
                       await cancelAllNotifications();
+                      const currentState = useStore.getState();
                       for (const med of allMeds) {
                         if (med.isActive !== false) {
                           for (const t of (med.times || [])) {
@@ -178,6 +181,7 @@ export default function RootLayout() {
                               med.name,
                               med.dosage,
                               t,
+                              currentState.language as 'tr' | 'en',
                               med.intervalDays,
                               med.startDate
                             );
@@ -185,11 +189,11 @@ export default function RootLayout() {
                         }
                       }
                       // Gün sonu bildirimi zamanlama
-                      const state = useStore.getState();
                       await scheduleEndOfDayMissedNotification(
-                        state.quietHoursStart,
-                        state.autoMarkMissedAsTaken,
-                        state.language as 'tr' | 'en'
+                        currentState.quietHoursStart,
+                        currentState.quietHoursStartMinute,
+                        currentState.autoMarkMissedAsTaken,
+                        currentState.language as 'tr' | 'en'
                       );
                     }
                   } catch (_notifErr) {

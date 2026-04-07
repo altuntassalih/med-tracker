@@ -293,7 +293,7 @@ export default function AddMedicationScreen() {
         const hasPermission = await requestNotificationPermission();
         if (hasPermission) {
           for (const time of times) {
-            await scheduleMedicationNotification(existingMed.id, medData.name, medData.dosage, time, medData.intervalDays, medData.startDate);
+            await scheduleMedicationNotification(existingMed.id, medData.name, medData.dosage, time, lang, medData.intervalDays, medData.startDate);
           }
         }
       } else {
@@ -303,7 +303,7 @@ export default function AddMedicationScreen() {
         const hasPermission = await requestNotificationPermission();
         if (hasPermission) {
           for (const time of times) {
-            await scheduleMedicationNotification(newMed.id, medData.name, medData.dosage, time, medData.intervalDays, medData.startDate);
+            await scheduleMedicationNotification(newMed.id, medData.name, medData.dosage, time, lang, medData.intervalDays, medData.startDate);
           }
         }
       }

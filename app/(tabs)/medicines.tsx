@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -30,6 +30,7 @@ export default function MedicinesScreen() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [selectedMeds, setSelectedMeds] = useState<string[]>([]);
+  const scrollRef = useRef<ScrollView>(null);
   
   const colors = getThemeColors(theme);
   const styles = getStyles(colors);
@@ -82,6 +83,10 @@ export default function MedicinesScreen() {
       const result = await analyzeMedicationInteractions(medicationNames, lang);
       setAnalysisResult(result);
       setSelectedMeds([]); 
+      // Sonuç geldiğinde biraz bekle ve en alta kaydır
+      setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     } catch (err: any) {
       const errMsg = lang === 'tr' 
         ? `Hata detayı: ${err.message || 'Bilinmeyen hata'}\n\nEğer "High Demand" hatası alıyorsanız lütfen daha az ilaç seçerek tekrar deneyin.`
@@ -127,11 +132,19 @@ export default function MedicinesScreen() {
         <Text style={styles.profileName}>{activeProfile?.name ?? t(lang, 'medicines.noProfile')}</Text>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        ref={scrollRef}
+        style={styles.scroll} 
+        contentContainerStyle={styles.scrollContent} 
+        showsVerticalScrollIndicator={false}
+      >
         <TouchableOpacity
-          style={[styles.analyzeButton, isAnalyzing && styles.analyzeButtonDisabled]}
+          style={[
+            styles.analyzeButton, 
+            (isAnalyzing || selectedMeds.length === 0) && styles.analyzeButtonDisabled
+          ]}
           onPress={handleAnalyze}
-          disabled={isAnalyzing}
+          disabled={isAnalyzing || selectedMeds.length === 0}
           activeOpacity={0.8}
         >
           {isAnalyzing ? (
