@@ -102,43 +102,59 @@ export const scheduleMedicationNotification = async (
     const triggerHour = Math.floor(totalMinutes / 60);
     const triggerMinute = totalMinutes % 60;
 
-    // Sessiz saat kontrolü
-    const quietStart = state.quietHoursStart;
-    const quietEnd = state.quietHoursEnd;
-    let isQuiet = false;
+    // Sessiz saat kontrolü (Dakika hassasiyetiyle)
+    const quietStartH = state.quietHoursStart;
+    const quietStartM = state.quietHoursStartMinute || 0;
+    const quietEndH = state.quietHoursEnd;
+    const quietEndM = state.quietHoursEndMinute || 0;
 
-    if (quietStart < quietEnd) {
-      if (triggerHour >= quietStart && triggerHour < quietEnd) isQuiet = true;
-    } else if (quietStart > quietEnd) {
-      if (triggerHour >= quietStart || triggerHour < quietEnd) isQuiet = true;
+    const triggerTotalMin = triggerHour * 60 + triggerMinute;
+    const quietStartTotalMin = quietStartH * 60 + quietStartM;
+    const quietEndTotalMin = quietEndH * 60 + quietEndM;
+
+    let isQuiet = false;
+    if (quietStartTotalMin < quietEndTotalMin) {
+      if (triggerTotalMin >= quietStartTotalMin && triggerTotalMin < quietEndTotalMin) isQuiet = true;
+    } else {
+      // Gece yarısını geçen aralık (Örn: 23:00 - 07:00)
+      if (triggerTotalMin >= quietStartTotalMin || triggerTotalMin < quietEndTotalMin) isQuiet = true;
     }
 
-    if (isQuiet) return 'quiet_hours';
+    if (isQuiet) {
+      // TEST IÇIN: Neden sustuğunu konsola yazdır (Daha sonra silinecek)
+      console.log(`[Notification] Skip: Trigger ${triggerHour}:${triggerMinute} in Quiet Hours (${quietStartH}:${quietStartM} - ${quietEndH}:${quietEndM})`);
+      return 'quiet_hours';
+    }
 
-    // SDK 54 doğru trigger formatı
-    // channelId trigger içinde (Android 8+), NOT content içinde
+    // SDK 54 doğru trigger formatı + Android EXACT alarm
     let trigger: any;
-
     if (intervalDays === 7) {
-      // Haftalık tetikleyici
       const startD = new Date(startDate + 'T12:00:00');
-      const weekday = startD.getDay() + 1; // expo: 1=Pazar, 2=Pazartesi...
+      const weekday = startD.getDay() + 1;
       trigger = {
-        type: SchedulableTriggerInputTypes?.WEEKLY ?? 'weekly',
         weekday,
         hour: triggerHour,
         minute: triggerMinute,
-        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+        repeats: true,
+        ...(Platform.OS === 'android' && { 
+          channelId: NOTIFICATION_CHANNEL_ID,
+          exact: true 
+        }),
       };
     } else {
-      // Günlük tetikleyici
       trigger = {
-        type: SchedulableTriggerInputTypes?.DAILY ?? 'daily',
         hour: triggerHour,
         minute: triggerMinute,
-        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+        repeats: true,
+        ...(Platform.OS === 'android' && { 
+          channelId: NOTIFICATION_CHANNEL_ID,
+          exact: true 
+        }),
       };
     }
+
+    // TEMPORARY LOG: Silinecek
+    console.log(`[Notification] Scheduled: ${medicationName} at ${triggerHour}:${triggerMinute} (Exact: true, Repeats: true)`);
 
     const identifier = await Notifications.scheduleNotificationAsync({
       content: {
@@ -236,10 +252,13 @@ export const scheduleEndOfDayMissedNotification = async (
         priority: 'max',
       },
       trigger: {
-        type: SchedulableTriggerInputTypes?.DAILY ?? 'daily',
         hour: triggerHour,
         minute: triggerMinute,
-        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+        repeats: true,
+        ...(Platform.OS === 'android' && { 
+          channelId: NOTIFICATION_CHANNEL_ID,
+          exact: true 
+        }),
       },
     });
   } catch (_err) {
