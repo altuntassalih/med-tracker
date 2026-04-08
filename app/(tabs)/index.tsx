@@ -66,14 +66,32 @@ export default function HomeScreen() {
     }, [language])
   );
 
-  const handleTakeMedication = async (medId: string, time: string) => {
+  const handleTakeMedication = async (medId: string, time: string, diff?: number) => {
     if (!activeProfile?.id) return;
+    
+    let targetStr = todayStr;
+    if (diff !== undefined && diff < 0) {
+      const [h, m] = time.split(':').map(Number);
+      const timeMinutes = h * 60 + m;
+      const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+      
+      // Eğer geriyedönük (diff < 0) bir ilacı, saat olarak bugünden daha ileri bir saatse, dünün ilacıdır
+      if (timeMinutes > currentMinutes) {
+        const d = new Date();
+        d.setDate(d.getDate() - 1);
+        const y = d.getFullYear();
+        const mon = (d.getMonth() + 1).toString().padStart(2, '0');
+        const dt = d.getDate().toString().padStart(2, '0');
+        targetStr = `${y}-${mon}-${dt}`;
+      }
+    }
+
     const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
       profileId: activeProfile.id,
       medicationId: medId,
       expectedTime: time,
       takenAt: new Date().toISOString(),
-      scheduledDate: todayStr,
+      scheduledDate: targetStr,
       status: 'taken',
     };
     
@@ -240,7 +258,7 @@ export default function HomeScreen() {
                     <Text style={styles.upcomingDose}>{item.med.dosage} {item.med.unit}</Text>
                     <Text style={styles.overdueAgo}>{timeAgoStr}</Text>
                   </View>
-                  <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time)}>
+                  <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time, item.diff)}>
                     <Text style={styles.takeBtnEmoji}>✓</Text>
                     <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
                   </TouchableOpacity>
@@ -275,7 +293,7 @@ export default function HomeScreen() {
                       {isPast ? t(language as LanguageCode, 'home.passed') : item.diff === 0 ? t(language as LanguageCode, 'home.now') : `${item.diff} ${t(language as LanguageCode, 'home.minsLater')}`}
                     </Text>
                   </View>
-                  <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time)}>
+                  <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time, item.diff)}>
                     <Text style={styles.takeBtnEmoji}>✓</Text>
                     <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
                   </TouchableOpacity>

@@ -140,20 +140,14 @@ export const scheduleMedicationNotification = async (
         hour: triggerHour,
         minute: triggerMinute,
         repeats: true,
-        ...(Platform.OS === 'android' && { 
-          channelId: NOTIFICATION_CHANNEL_ID,
-          exact: true 
-        }),
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
       };
     } else {
       trigger = {
         hour: triggerHour,
         minute: triggerMinute,
         repeats: true,
-        ...(Platform.OS === 'android' && { 
-          channelId: NOTIFICATION_CHANNEL_ID,
-          exact: true 
-        }),
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
       };
     }
 
@@ -176,6 +170,33 @@ export const scheduleMedicationNotification = async (
       },
       trigger,
     });
+
+    // Kullanıcı talebi: İlaç eklendiğinde/güncellendiğinde 5 dk'dan az vakit kalmışsa ANINDA BİLDİRİM at
+    const now = new Date();
+    const currentH = now.getHours();
+    const currentM = now.getMinutes();
+    const currentTotalMin = currentH * 60 + currentM;
+    const targetMedTotalMin = originalHour * 60 + originalMinute;
+    
+    let minutesLeft = targetMedTotalMin - currentTotalMin;
+    if (minutesLeft < 0) minutesLeft += 24 * 60;
+    
+    // Eğer ilaç alımına şu anda 5 dk veya daha az kaldıysa (örneğin 09:56'da 10:00 ilacı eklenirse)
+    if (minutesLeft > 0 && minutesLeft <= 5) {
+      console.log(`[Notification] Firing Immediate 5-min warning for ${medicationName} (Minutes left: ${minutesLeft})`);
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: lang === 'tr' ? '🚨 Az Önce Kuruldu!' : '🚨 Scheduled Just Now!',
+          body: lang === 'tr'
+            ? `${medicationName} (${dosage}) alımınıza ${minutesLeft} dakika kaldı!`
+            : `Only ${minutesLeft} minutes left for ${medicationName} (${dosage})!`,
+          data: { medicationId },
+          sound: 'default',
+          priority: 'max',
+        },
+        trigger: null, // Hemen at
+      });
+    }
 
     return identifier;
   } catch (err) {
@@ -278,10 +299,7 @@ export const scheduleEndOfDayMissedNotification = async (
         hour: targetHour,
         minute: targetMinute,
         repeats: true,
-        ...(Platform.OS === 'android' && { 
-          channelId: NOTIFICATION_CHANNEL_ID,
-          exact: true 
-        }),
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
       },
     });
     console.log(`[Notification] EndOfDay scheduled at ${targetHour}:${targetMinute}`);
@@ -348,8 +366,17 @@ export const checkAndRefreshEndOfDayNotification = async (lang: 'tr' | 'en' = 't
       }
     } catch (_err) { /* no-op */ }
   } else {
-    // Bekleyen var, bildirimi kur (Zaten varsa üzerine kurar veya silip kurar)
-    scheduleEndOfDayMissedNotification(state.quietHoursStart, state.quietHoursStartMinute, state.autoMarkMissedAsTaken, lang);
+    // Bekleyen var, bildirimi kur (Zaten varsa üzerine kurma, yeniden tetiklenmeyi engelle!)
+    let alreadyScheduled = false;
+    if (Notifications) {
+      try {
+        const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+        alreadyScheduled = scheduled.some((notif: any) => notif.content.data?.notifType === END_OF_DAY_NOTIF_DATA_KEY);
+      } catch (err) {}
+    }
+    if (!alreadyScheduled) {
+      scheduleEndOfDayMissedNotification(state.quietHoursStart, state.quietHoursStartMinute, state.autoMarkMissedAsTaken, lang);
+    }
   }
 };
 
