@@ -12,9 +12,9 @@ export default function SettingsScreen() {
   const {
     logout, language, setLanguage, theme, setTheme, showAlert,
     quietHoursStart, quietHoursEnd, quietHoursStartMinute, quietHoursEndMinute,
-    notificationsEnabled,
+    quietHoursEnabled, notificationsEnabled,
     setQuietHoursStart, setQuietHoursEnd, setQuietHoursStartMinute, setQuietHoursEndMinute,
-    setNotificationsEnabled,
+    setQuietHoursEnabled, setNotificationsEnabled,
     autoMarkMissedAsTaken, setAutoMarkMissedAsTaken,
   } = useStore();
   const [showQuietPicker, setShowQuietPicker] = useState(false);
@@ -145,21 +145,34 @@ export default function SettingsScreen() {
               onSwitchChange={setNotificationsEnabled}
             />
             <Divider colors={colors} />
-            <TouchableOpacity style={styles.settingRow} onPress={() => openQuietPicker('start')} activeOpacity={0.7}>
-              <Text style={styles.settingIcon}>🌙</Text>
-              <Text style={styles.settingLabel}>{t(lang, 'settings.quietStart')}</Text>
-              <View style={styles.timeTag}>
-                <Text style={styles.timeTagText}>{padH(quietHoursStart)}:{padM(quietHoursStartMinute)}</Text>
-              </View>
-            </TouchableOpacity>
-            <Divider colors={colors} />
-            <TouchableOpacity style={styles.settingRow} onPress={() => openQuietPicker('end')} activeOpacity={0.7}>
-              <Text style={styles.settingIcon}>☀️</Text>
-              <Text style={styles.settingLabel}>{t(lang, 'settings.quietEnd')}</Text>
-              <View style={styles.timeTag}>
-                <Text style={styles.timeTagText}>{padH(quietHoursEnd)}:{padM(quietHoursEndMinute)}</Text>
-              </View>
-            </TouchableOpacity>
+            <SettingRow
+              colors={colors}
+              icon="🔕"
+              label={lang === 'tr' ? 'Sessiz Saatleri Etkinleştir' : 'Enable Quiet Hours'}
+              hasSwitch
+              switchValue={quietHoursEnabled}
+              onSwitchChange={setQuietHoursEnabled}
+            />
+            {quietHoursEnabled && (
+              <>
+                <Divider colors={colors} />
+                <TouchableOpacity style={styles.settingRow} onPress={() => openQuietPicker('start')} activeOpacity={0.7}>
+                  <Text style={styles.settingIcon}>🌙</Text>
+                  <Text style={styles.settingLabel}>{t(lang, 'settings.quietStart')}</Text>
+                  <View style={styles.timeTag}>
+                    <Text style={styles.timeTagText}>{padH(quietHoursStart)}:{padM(quietHoursStartMinute)}</Text>
+                  </View>
+                </TouchableOpacity>
+                <Divider colors={colors} />
+                <TouchableOpacity style={styles.settingRow} onPress={() => openQuietPicker('end')} activeOpacity={0.7}>
+                  <Text style={styles.settingIcon}>☀️</Text>
+                  <Text style={styles.settingLabel}>{t(lang, 'settings.quietEnd')}</Text>
+                  <View style={styles.timeTag}>
+                    <Text style={styles.timeTagText}>{padH(quietHoursEnd)}:{padM(quietHoursEndMinute)}</Text>
+                  </View>
+                </TouchableOpacity>
+              </>
+            )}
             <Divider colors={colors} />
             <SettingRow
               colors={colors}

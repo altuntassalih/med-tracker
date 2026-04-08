@@ -61,6 +61,7 @@ interface AppState {
   quietHoursEnd: number;
   quietHoursStartMinute: number;
   quietHoursEndMinute: number;
+  quietHoursEnabled: boolean;
   notificationsEnabled: boolean;
   autoMarkMissedAsTaken: boolean;
   setUser: (user: User | null) => void;
@@ -73,6 +74,8 @@ interface AppState {
   updateMedication: (id: string, data: Partial<Medication>) => void;
   setMedicationLogs: (logs: MedicationLog[]) => void;
   addMedicationLogState: (log: MedicationLog) => void;
+  updateMedicationLogState: (logId: string, data: Partial<MedicationLog>) => void;
+  deleteMedicationLogState: (logId: string) => void;
   removeMedicationLogsForMed: (medicationId: string) => void;
   setActiveProfileId: (id: string | null) => void;
   setLanguage: (lang: 'tr' | 'en') => void;
@@ -83,6 +86,7 @@ interface AppState {
   setQuietHoursEnd: (time: number) => void;
   setQuietHoursStartMinute: (minute: number) => void;
   setQuietHoursEndMinute: (minute: number) => void;
+  setQuietHoursEnabled: (enabled: boolean) => void;
   setNotificationsEnabled: (enabled: boolean) => void;
   setAutoMarkMissedAsTaken: (enabled: boolean) => void;
   logout: () => void;
@@ -107,6 +111,7 @@ export const useStore = create<AppState>()(
       quietHoursEnd: 7,
       quietHoursStartMinute: 0,
       quietHoursEndMinute: 0,
+      quietHoursEnabled: false,
       notificationsEnabled: true,
       autoMarkMissedAsTaken: false,
       setUser: (user) => set({ user }),
@@ -125,6 +130,12 @@ export const useStore = create<AppState>()(
       })),
       setMedicationLogs: (logs) => set({ medicationLogs: logs }),
       addMedicationLogState: (log) => set((state) => ({ medicationLogs: [...(state.medicationLogs || []), log] })),
+      updateMedicationLogState: (logId, data) => set((state) => ({
+        medicationLogs: (state.medicationLogs || []).map((l) => l.id === logId ? { ...l, ...data } : l)
+      })),
+      deleteMedicationLogState: (logId) => set((state) => ({
+        medicationLogs: (state.medicationLogs || []).filter((l) => l.id !== logId)
+      })),
       removeMedicationLogsForMed: (medicationId) => set((state) => ({
         medicationLogs: (state.medicationLogs || []).filter((l) => l.medicationId !== medicationId)
       })),
@@ -137,6 +148,7 @@ export const useStore = create<AppState>()(
       setQuietHoursEnd: (time) => set({ quietHoursEnd: time }),
       setQuietHoursStartMinute: (minute) => set({ quietHoursStartMinute: minute }),
       setQuietHoursEndMinute: (minute) => set({ quietHoursEndMinute: minute }),
+      setQuietHoursEnabled: (enabled) => set({ quietHoursEnabled: enabled }),
       setNotificationsEnabled: (enabled) => set({ notificationsEnabled: enabled }),
       setAutoMarkMissedAsTaken: (enabled) => set({ autoMarkMissedAsTaken: enabled }),
       logout: () => set({ user: null }),

@@ -56,6 +56,7 @@ export interface MedicationLog {
   profileId: string;
   expectedTime: string;
   takenAt: string;
+  scheduledDate?: string;
   status: 'taken' | 'missed';
   createdAt?: any;
 }
@@ -222,6 +223,22 @@ export const addMedicationLog = async (data: Omit<MedicationLog, 'id' | 'created
       createdAt: new Date()
     };
   }
+};
+
+export const updateMedicationLog = async (logId: string, data: Partial<MedicationLog>): Promise<void> => {
+  const firestore = getDb();
+  if (!firestore) return;
+  try {
+    await updateDoc(doc(firestore, 'medicationLogs', logId), data);
+  } catch (_err) { /* no-op */ }
+};
+
+export const deleteMedicationLog = async (logId: string): Promise<void> => {
+  const firestore = getDb();
+  if (!firestore) return;
+  try {
+    await deleteDoc(doc(firestore, 'medicationLogs', logId));
+  } catch (_err) { /* no-op */ }
 };
 
 export const clearMedicationLogs = async (medicationId: string): Promise<void> => {

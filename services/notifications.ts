@@ -113,15 +113,18 @@ export const scheduleMedicationNotification = async (
     const quietStartTotalMin = quietStartH * 60 + quietStartM;
     const quietEndTotalMin = quietEndH * 60 + quietEndM;
 
+    const isQuietEnabled = state.quietHoursEnabled;
     let isQuiet = false;
-    if (quietStartTotalMin < quietEndTotalMin) {
-      if (triggerTotalMin >= quietStartTotalMin && triggerTotalMin < quietEndTotalMin) isQuiet = true;
-    } else {
-      // Gece yarısını geçen aralık (Örn: 23:00 - 07:00)
-      if (triggerTotalMin >= quietStartTotalMin || triggerTotalMin < quietEndTotalMin) isQuiet = true;
+    if (isQuietEnabled) {
+      if (quietStartTotalMin < quietEndTotalMin) {
+        if (triggerTotalMin >= quietStartTotalMin && triggerTotalMin < quietEndTotalMin) isQuiet = true;
+      } else {
+        // Gece yarısını geçen aralık (Örn: 23:00 - 07:00)
+        if (triggerTotalMin >= quietStartTotalMin || triggerTotalMin < quietEndTotalMin) isQuiet = true;
+      }
     }
 
-    if (isQuiet) {
+    if (isQuietEnabled && isQuiet) {
       // TEST IÇIN: Neden sustuğunu konsola yazdır (Daha sonra silinecek)
       console.log(`[Notification] Skip: Trigger ${triggerHour}:${triggerMinute} in Quiet Hours (${quietStartH}:${quietStartM} - ${quietEndH}:${quietEndM})`);
       return 'quiet_hours';
@@ -236,23 +239,25 @@ export const scheduleEndOfDayMissedNotification = async (
 
   await ensureAndroidChannel();
 
-  // Kullanıcı İsteği: 23:59'da bildirim at, eğer sessiz saatler içinde değilse.
-  // Sessiz saatler 23:59'dan önce başlıyorsa, sessiz saatlerden 5 dk önce at.
+  // Kullanıcı İsteği: 23:59'da bildirim at, eğer sessiz saatler aktifse ve içindeyse.
+  // Sessiz saatler aktifse ve 23:59'dan önce başlıyorsa, sessiz saatlerden 5 dk önce at.
   
   let targetHour = 23;
   let targetMinute = 59;
   
-  const quietStartTotalMin = quietHoursStart * 60 + quietHoursStartMinute;
-  const targetTotalMin = 23 * 60 + 59;
-  
-  // Eğer sessiz saatler 00:00'dan önce başlıyorsa (örn 22:00) 
-  // ve hedefimiz (23:59) bu aralığa düşüyorsa
-  if (quietStartTotalMin < targetTotalMin && quietStartTotalMin > 0) {
-    // Sessiz saat başlangıcından 5 dk önce
-    let totalMinutes = quietStartTotalMin - END_OF_DAY_LEAD_MINUTES;
-    if (totalMinutes < 0) totalMinutes += 24 * 60;
-    targetHour = Math.floor(totalMinutes / 60);
-    targetMinute = totalMinutes % 60;
+  if (state.quietHoursEnabled) {
+    const quietStartTotalMin = quietHoursStart * 60 + quietHoursStartMinute;
+    const targetTotalMin = 23 * 60 + 59;
+    
+    // Eğer sessiz saatler 00:00'dan önce başlıyorsa (örn 22:00) 
+    // ve hedefimiz (23:59) bu aralığa düşüyorsa
+    if (quietStartTotalMin < targetTotalMin && quietStartTotalMin > 0) {
+      // Sessiz saat başlangıcından 5 dk önce
+      let totalMinutes = quietStartTotalMin - END_OF_DAY_LEAD_MINUTES;
+      if (totalMinutes < 0) totalMinutes += 24 * 60;
+      targetHour = Math.floor(totalMinutes / 60);
+      targetMinute = totalMinutes % 60;
+    }
   }
 
   const title = lang === 'tr' ? '⏰ Unutmayın!' : '⏰ Reminder!';
@@ -282,6 +287,69 @@ export const scheduleEndOfDayMissedNotification = async (
     console.log(`[Notification] EndOfDay scheduled at ${targetHour}:${targetMinute}`);
   } catch (_err) {
     // Bildirim zamanlama hatası
+  }
+};
+
+/**
+ * Güncel state'i kontrol eder, eğer o gün için alınmamış/bekleyen ilaç YOKSA
+ * gün sonu bildirimini iptal eder. Eğer bekleyen varsa planlamasını sağlar.
+ */
+export const checkAndRefreshEndOfDayNotification = async (lang: 'tr' | 'en' = 'tr'): Promise<void> => {
+  const state = useStore.getState();
+  if (!state.notificationsEnabled || state.autoMarkMissedAsTaken) return;
+  if (!state.activeProfileId) return;
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = (now.getMonth() + 1).toString().padStart(2, '0');
+  const day = now.getDate().toString().padStart(2, '0');
+  const todayStr = `${year}-${month}-${day}`;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  let hasUntaken = false;
+
+  const medications = (state.medications || []).filter(m => m.profileId === state.activeProfileId && m.isActive !== false);
+  const logs = (state.medicationLogs || []).filter(l => l.profileId === state.activeProfileId);
+
+  medications.forEach((med) => {
+    // Aralık kontrolü
+    if (med.intervalDays && med.intervalDays > 1) {
+      const start = new Date(med.startDate).setHours(0,0,0,0);
+      const today = new Date().setHours(0,0,0,0);
+      const daysDiff = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+      if (daysDiff % med.intervalDays !== 0) return;
+    }
+
+    (med.times || []).forEach((time) => {
+      // Bugün alındı mı? (scheduledDate kontrolü önemli)
+      const isTakenToday = logs.some((l) => 
+        l.medicationId === med.id && 
+        l.expectedTime === time && 
+        l.scheduledDate === todayStr &&
+        l.status === 'taken'
+      );
+
+      if (!isTakenToday) {
+        // Alınmadı, o zaman bu ilaç saati geçti mi veya bugüne mi ait?
+        hasUntaken = true;
+      }
+    });
+  });
+
+  if (!hasUntaken) {
+    // Tüm ilaçlar alınmış, 23:59 bıldırımını ıptal et!
+    if (!Notifications) return;
+    try {
+      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+      for (const notif of scheduled) {
+        if (notif.content.data?.notifType === END_OF_DAY_NOTIF_DATA_KEY) {
+          await Notifications.cancelScheduledNotificationAsync(notif.identifier);
+        }
+      }
+    } catch (_err) { /* no-op */ }
+  } else {
+    // Bekleyen var, bildirimi kur (Zaten varsa üzerine kurar veya silip kurar)
+    scheduleEndOfDayMissedNotification(state.quietHoursStart, state.quietHoursStartMinute, state.autoMarkMissedAsTaken, lang);
   }
 };
 

@@ -12,6 +12,7 @@ import {
 import { router, useFocusEffect } from 'expo-router';
 import { useStore } from '../../store/useStore';
 import { getMedications, Medication, addMedicationLog, MedicationLog } from '../../services/firestore';
+import { checkAndRefreshEndOfDayNotification } from '../../services/notifications';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
 
@@ -61,7 +62,8 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       onRefresh();
-    }, [])
+      checkAndRefreshEndOfDayNotification(language as LanguageCode);
+    }, [language])
   );
 
   const handleTakeMedication = async (medId: string, time: string) => {
@@ -71,11 +73,13 @@ export default function HomeScreen() {
       medicationId: medId,
       expectedTime: time,
       takenAt: new Date().toISOString(),
+      scheduledDate: todayStr,
       status: 'taken',
     };
     
     addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
     await addMedicationLog(logData);
+    checkAndRefreshEndOfDayNotification(language as LanguageCode);
   };
 
   const onRefresh = async () => {
@@ -105,7 +109,7 @@ export default function HomeScreen() {
         const isTakenToday = logs.some((l) => 
           l.medicationId === med.id && 
           l.expectedTime === time && 
-          l.takenAt.startsWith(todayStr) &&
+          (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr))) &&
           l.status === 'taken'
         );
 
@@ -134,7 +138,7 @@ export default function HomeScreen() {
         const isTakenToday = logs.some((l) => 
           l.medicationId === med.id && 
           l.expectedTime === time && 
-          l.takenAt.startsWith(todayStr) &&
+          (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr))) &&
           l.status === 'taken'
         );
         if (isTakenToday) {

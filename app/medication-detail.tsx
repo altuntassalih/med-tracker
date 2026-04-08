@@ -6,8 +6,8 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { getMedicationInfo } from '../services/gemini';
 import { useStore } from '../store/useStore';
-import { updateMedication, clearMedicationLogs } from '../services/firestore';
-import { cancelMedicationNotifications } from '../services/notifications';
+import { updateMedication, clearMedicationLogs, addMedicationLog, updateMedicationLog, deleteMedicationLog, MedicationLog } from '../services/firestore';
+import { cancelMedicationNotifications, checkAndRefreshEndOfDayNotification } from '../services/notifications';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
 import { formatDate } from '../utils/date';
@@ -18,10 +18,14 @@ const TRACKING_DAYS_COUNT = 30;
 export default function MedicationDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const {
+    activeProfileId,
     medications: allMedications,
     medicationLogs,
     updateMedication: updateMedInStore,
     removeMedicationLogsForMed,
+    addMedicationLogState,
+    updateMedicationLogState,
+    deleteMedicationLogState,
     language, theme, showAlert,
   } = useStore();
   const [medication, setMedication] = useState<any | null>(null);
@@ -119,6 +123,44 @@ export default function MedicationDetailScreen() {
     return t(lang, `medicationOptions.types.${value}`);
   };
 
+  const handleSlotPress = async (dateStr: string, time: string, currentStatus: string) => {
+    if (!medication || !activeProfileId) return;
+
+    const existingLog = medicationLogs.find(
+      l => l.medicationId === medication.id && 
+           l.expectedTime === time && 
+           (l.scheduledDate === dateStr || (!l.scheduledDate && l.takenAt.startsWith(dateStr)))
+    );
+
+    try {
+      if (currentStatus === 'none') {
+        const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
+          profileId: activeProfileId,
+          medicationId: medication.id,
+          expectedTime: time,
+          takenAt: new Date().toISOString(),
+          scheduledDate: dateStr,
+          status: 'taken',
+        };
+        addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
+        await addMedicationLog(logData);
+      } else if (currentStatus === 'taken') {
+        if (existingLog) {
+          updateMedicationLogState(existingLog.id, { status: 'missed' });
+          await updateMedicationLog(existingLog.id, { status: 'missed' });
+        }
+      } else if (currentStatus === 'missed') {
+        if (existingLog) {
+          deleteMedicationLogState(existingLog.id);
+          await deleteMedicationLog(existingLog.id);
+        }
+      }
+      checkAndRefreshEndOfDayNotification(lang);
+    } catch (err) {
+      showAlert({ message: lang === 'tr' ? 'Güncelleme başarısız oldu.' : 'Update failed.', type: 'danger' });
+    }
+  };
+
   // Son TRACKING_DAYS_COUNT günlük geçmişi hesapla
   const buildDailyTracking = () => {
     if (!medication) return [];
@@ -148,7 +190,7 @@ export default function MedicationDetailScreen() {
 
       const slots = (medication.times || []).map((time: string) => {
         const log = medLogs.find(
-          (l) => l.expectedTime === time && l.takenAt.startsWith(dateStr)
+          (l) => l.expectedTime === time && (l.scheduledDate === dateStr || (!l.scheduledDate && l.takenAt.startsWith(dateStr)))
         );
         return {
           time,
@@ -278,7 +320,9 @@ export default function MedicationDetailScreen() {
                 <Text style={styles.closeBtn}>✕</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.aiResultText}>{aiInfo}</Text>
+            <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={true}>
+              <Text style={styles.aiResultText}>{aiInfo}</Text>
+            </ScrollView>
             <View style={styles.aiDisclaimer}>
               <Text style={styles.aiDisclaimerText}>
                 {t(lang, 'medicationDetail.aiDisclaimer')}
@@ -336,12 +380,17 @@ export default function MedicationDetailScreen() {
                     <Text style={[styles.trackingDate, { color: colors.textSecondary }]}>{day.label}</Text>
                     <View style={styles.trackingSlots}>
                       {day.slots.map((slot, si) => (
-                        <View key={si} style={styles.trackingSlot}>
+                        <TouchableOpacity 
+                          key={si} 
+                          style={styles.trackingSlot}
+                          onPress={() => handleSlotPress(day.date, slot.time, slot.status)}
+                          activeOpacity={0.6}
+                        >
                           <Text style={styles.trackingSlotTime}>{slot.time}</Text>
                           <Text style={styles.trackingSlotIcon}>
                             {slot.status === 'taken' ? '✅' : slot.status === 'missed' ? '❌' : '⬜'}
                           </Text>
-                        </View>
+                        </TouchableOpacity>
                       ))}
                     </View>
                   </View>
@@ -484,7 +533,7 @@ const getStyles = (colors: any) => StyleSheet.create({
   },
   trackingDate: { fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightMedium, width: 40 },
   trackingSlots: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
-  trackingSlot: { alignItems: 'center', gap: 2 },
+  trackingSlot: { alignItems: 'center', gap: 2, padding: 4 },
   trackingSlotTime: { fontSize: 10, color: '#888' },
   trackingSlotIcon: { fontSize: 18 },
   modalCloseBtn: { borderRadius: RADIUS.lg, padding: SPACING.lg, alignItems: 'center', marginTop: SPACING.lg },

@@ -170,7 +170,9 @@ export default function MedicinesScreen() {
                 <Text style={styles.closeBtn}>✕</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.analysisResultText}>{analysisResult}</Text>
+            <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={true}>
+              <Text style={styles.analysisResultText}>{analysisResult}</Text>
+            </ScrollView>
           </View>
         )}
 
