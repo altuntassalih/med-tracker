@@ -36,9 +36,9 @@ export default function ProfilesScreen() {
   };
 
   const handleDeleteProfile = (profile: any) => {
-    if (profile.isMain) {
+    if (profiles.length <= 1) {
       showAlert({
-        message: t(lang, 'profiles.mainProfileErrorMsg'),
+        message: lang === 'tr' ? 'Son profili silemezsiniz.' : 'You cannot delete the last profile.',
         type: 'warning'
       });
       return;
@@ -143,7 +143,7 @@ export default function ProfilesScreen() {
                   <Text style={styles.editProfileBtnText}>✎</Text>
                 </TouchableOpacity>
 
-                {!profile.isMain && (
+                {profiles.length > 1 && (
                   <TouchableOpacity onPress={() => handleDeleteProfile(profile)} style={styles.deleteProfileBtn}>
                     <Text style={styles.deleteProfileBtnText}>🗑️</Text>
                   </TouchableOpacity>

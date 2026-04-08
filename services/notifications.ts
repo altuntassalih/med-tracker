@@ -162,7 +162,10 @@ export const scheduleMedicationNotification = async (
     // Expo genelde bunu yarın için planlar. Ancak anlık tetiklenmeyi önlemek için
     // trigger nesnesinin doğruluğundan emin oluyoruz.
     
-    const identifier = await Notifications.scheduleNotificationAsync({
+    const identifierStr = `med-${medicationId}-${time.replace(':', '')}`;
+
+    await Notifications.scheduleNotificationAsync({
+      identifier: identifierStr,
       content: {
         title: lang === 'tr' ? '💊 İlaç Vakti Yaklaşıyor!' : '💊 Medication Time Approaching!',
         body: lang === 'tr' 
@@ -189,6 +192,7 @@ export const scheduleMedicationNotification = async (
     if (minutesLeft > 0 && minutesLeft <= 5) {
       console.log(`[Notification] Firing Immediate 5-min warning for ${medicationName} (Minutes left: ${minutesLeft})`);
       await Notifications.scheduleNotificationAsync({
+        identifier: `med-immed-${medicationId}-${time.replace(':', '')}`,
         content: {
           title: lang === 'tr' ? '🚨 Az Önce Kuruldu!' : '🚨 Scheduled Just Now!',
           body: lang === 'tr'
@@ -202,7 +206,7 @@ export const scheduleMedicationNotification = async (
       });
     }
 
-    return identifier;
+    return identifierStr;
   } catch (err) {
     return 'error';
   }
@@ -246,14 +250,9 @@ export const scheduleEndOfDayMissedNotification = async (
 ): Promise<void> => {
   if (!Notifications) return;
 
-  // Önceki gün sonu bildirimlerini iptal et
+  // Önceki gün sonu bildirimini iptal et (Identifier üzerinden)
   try {
-    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-    for (const notif of scheduled) {
-      if (notif.content.data?.notifType === END_OF_DAY_NOTIF_DATA_KEY) {
-        await Notifications.cancelScheduledNotificationAsync(notif.identifier);
-      }
-    }
+    await Notifications.cancelScheduledNotificationAsync(END_OF_DAY_NOTIF_DATA_KEY);
   } catch (_err) { /* no-op */ }
 
   // autoMarkMissedAsTaken=true ise bildirim gerekmez
@@ -278,6 +277,7 @@ export const scheduleEndOfDayMissedNotification = async (
 
   try {
     await Notifications.scheduleNotificationAsync({
+      identifier: END_OF_DAY_NOTIF_DATA_KEY,
       content: {
         title,
         body,
@@ -329,44 +329,31 @@ export const checkAndRefreshEndOfDayNotification = async (lang: 'tr' | 'en' = 't
     }
 
     (med.times || []).forEach((time) => {
-      // Bugün alındı mı? (scheduledDate kontrolü önemli)
+      // Bugün alındı mı? (scheduledDate eksik olabilir, eski kayıtlar için de fallback yap)
       const isTakenToday = logs.some((l) => 
         l.medicationId === med.id && 
         l.expectedTime === time && 
-        l.scheduledDate === todayStr &&
+        (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr))) &&
         l.status === 'taken'
       );
 
       if (!isTakenToday) {
-        // Alınmadı, o zaman bu ilaç saati geçti mi veya bugüne mi ait?
+        // Alınmadı. Sadece bugüne ait olması veya vaktinin geçmiş olması da önemli olabilir,
+        // Ancak bu ilaç bugün alınmadıysa ve bugün için aktifse hasUntaken true olur.
         hasUntaken = true;
       }
     });
   });
 
   if (!hasUntaken) {
-    // Tüm ilaçlar alınmış, 23:59 bıldırımını ıptal et!
+    // Tüm ilaçlar alınmış, 23:59 bildirimini iptal et!
     if (!Notifications) return;
     try {
-      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-      for (const notif of scheduled) {
-        if (notif.content.data?.notifType === END_OF_DAY_NOTIF_DATA_KEY) {
-          await Notifications.cancelScheduledNotificationAsync(notif.identifier);
-        }
-      }
+      await Notifications.cancelScheduledNotificationAsync(END_OF_DAY_NOTIF_DATA_KEY);
     } catch (_err) { /* no-op */ }
   } else {
-    // Bekleyen var, bildirimi kur (Zaten varsa üzerine kurma, yeniden tetiklenmeyi engelle!)
-    let alreadyScheduled = false;
-    if (Notifications) {
-      try {
-        const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-        alreadyScheduled = scheduled.some((notif: any) => notif.content.data?.notifType === END_OF_DAY_NOTIF_DATA_KEY);
-      } catch (err) {}
-    }
-    if (!alreadyScheduled) {
-      scheduleEndOfDayMissedNotification(state.quietHoursStart, state.quietHoursStartMinute, state.autoMarkMissedAsTaken, lang);
-    }
+    // Bekleyen var, bildirimi kur (Zaten varsa overwrite edecek, sorun değil, ID sabit)
+    scheduleEndOfDayMissedNotification(state.quietHoursStart, state.quietHoursStartMinute, state.autoMarkMissedAsTaken, lang);
   }
 };
 
