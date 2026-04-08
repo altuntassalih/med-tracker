@@ -130,12 +130,16 @@ export const scheduleMedicationNotification = async (
       return 'quiet_hours';
     }
 
+    // Bu ilacın bu vakti için BENZERSIZ bir identifier oluştur (Örn: med-ID-0800)
+    const identifierStr = `med-${medicationId}-${time.replace(':', '')}`;
+
     // SDK 54 doğru trigger formatı + Android EXACT alarm
     let trigger: any;
     if (intervalDays === 7) {
       const startD = new Date(startDate + 'T12:00:00');
       const weekday = startD.getDay() + 1;
       trigger = {
+        type: SchedulableTriggerInputTypes?.DAILY ?? 'daily',
         weekday,
         hour: triggerHour,
         minute: triggerMinute,
@@ -146,6 +150,7 @@ export const scheduleMedicationNotification = async (
       };
     } else {
       trigger = {
+        type: SchedulableTriggerInputTypes?.DAILY ?? 'daily',
         hour: triggerHour,
         minute: triggerMinute,
         repeats: true,
@@ -155,14 +160,8 @@ export const scheduleMedicationNotification = async (
       };
     }
 
-    // TEMPORARY LOG: Silinecek
-    console.log(`[Notification] Scheduled: ${medicationName} at ${triggerHour}:${triggerMinute} (Exact: true, Repeats: true)`);
-
-    // Eğer planlanan zaman şu anki zamandan çok yakınsa veya geçmişse (bugün için), 
-    // Expo genelde bunu yarın için planlar. Ancak anlık tetiklenmeyi önlemek için
-    // trigger nesnesinin doğruluğundan emin oluyoruz.
-    
-    const identifierStr = `med-${medicationId}-${time.replace(':', '')}`;
+    // Önce aynı kimlikli varsa iptal et (Overwrite bazen Android'de fail edebiliyor)
+    try { await Notifications.cancelScheduledNotificationAsync(identifierStr); } catch(e){}
 
     await Notifications.scheduleNotificationAsync({
       identifier: identifierStr,
@@ -171,7 +170,7 @@ export const scheduleMedicationNotification = async (
         body: lang === 'tr' 
           ? `${medicationName} (${dosage}) için ${NOTIFICATION_LEAD_MINUTES} dakika kaldı.`
           : `${NOTIFICATION_LEAD_MINUTES} minutes left for ${medicationName} (${dosage}).`,
-        data: { medicationId },
+        data: { medicationId, type: 'med-warning' },
         sound: 'default',
         priority: 'max',
       },

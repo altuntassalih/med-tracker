@@ -57,7 +57,16 @@ export default function HomeScreen() {
     const day = d.getDate().toString().padStart(2, '0');
     return `${year}-${month}-${day}`;
   };
+  const getYesterdayStr = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const year = d.getFullYear();
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day = d.getDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
   const todayStr = getTodayStr();
+  const yesterdayStr = getYesterdayStr();
 
   useFocusEffect(
     useCallback(() => {
@@ -66,23 +75,30 @@ export default function HomeScreen() {
     }, [language])
   );
 
+  // Kayıtlar değiştiğinde listeyi tazele (Sync fix)
+  useEffect(() => {
+    onRefresh();
+  }, [medicationLogs.length]);
+
   const handleTakeMedication = async (medId: string, time: string, diff?: number) => {
     if (!activeProfile?.id) return;
     
     let targetStr = todayStr;
-    if (diff !== undefined && diff < 0) {
-      const [h, m] = time.split(':').map(Number);
-      const timeMinutes = h * 60 + m;
-      const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-      
-      // Eğer geriyedönük (diff < 0) bir ilacı, saat olarak bugünden daha ileri bir saatse, dünün ilacıdır
-      if (timeMinutes > currentMinutes) {
-        const d = new Date();
-        d.setDate(d.getDate() - 1);
-        const y = d.getFullYear();
-        const mon = (d.getMonth() + 1).toString().padStart(2, '0');
-        const dt = d.getDate().toString().padStart(2, '0');
-        targetStr = `${y}-${mon}-${dt}`;
+    
+    if (diff !== undefined) {
+      if (diff < 0) {
+        const [h, m] = time.split(':').map(Number);
+        const timeMinutes = h * 60 + m;
+        const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+        
+        // Eğer geç kalan bir ilacı işaretliyorsak ve saati şu andan ilerideyse (gece yarısını geçmiştir), 
+        // VEYA özel olarak dünün ilacı olduğunu belirten -2000 diff değerine sahipse, dünün ilacıdır.
+        if (timeMinutes > currentMinutes || diff === -2000) {
+          targetStr = yesterdayStr;
+        }
+      } else if (diff > 1440) {
+        // Dünün ilacı olarak işaretlenmişse
+        targetStr = yesterdayStr;
       }
     }
 
@@ -114,41 +130,73 @@ export default function HomeScreen() {
     let completed: any[] = [];
 
     medications.forEach((med) => {
+      // 1. DÜNÜ KONTROL ET (Dünden kalan içilmemiş ilaç var mı?)
+      let isForYesterday = false;
       if (med.intervalDays && med.intervalDays > 1) {
         const start = new Date(med.startDate).setHours(0,0,0,0);
-        const today = new Date().setHours(0,0,0,0);
-        const daysDiff = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-        if (daysDiff % med.intervalDays !== 0) {
-          return;
-        }
+        const yesterdayDate = new Date();
+        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+        yesterdayDate.setHours(0,0,0,0);
+        const daysDiff = Math.floor((yesterdayDate.getTime() - start) / (1000 * 60 * 60 * 24));
+        if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForYesterday = true;
+      } else {
+        isForYesterday = true;
       }
 
-      (med.times || []).forEach((time) => {
-        const isTakenToday = logs.some((l) => 
-          l.medicationId === med.id && 
-          l.expectedTime === time && 
-          (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr))) &&
-          l.status === 'taken'
-        );
+      if (isForYesterday) {
+        (med.times || []).forEach((time) => {
+          const isTakenYesterday = logs.some((l) => 
+            l.medicationId === med.id && 
+            l.expectedTime === time && 
+            (l.scheduledDate === yesterdayStr || (!l.scheduledDate && l.takenAt.startsWith(yesterdayStr))) &&
+            l.status === 'taken'
+          );
 
-        if (isTakenToday) return;
+          if (!isTakenYesterday) {
+            // Dünden kalan ilaç -> Süresi geçti (Identifier olarak diff=2000 verelim ki dünün olduğu anlaşılsın)
+            overdue.push({ med, time, timeMinutes: 0, diff: -2000, label: t(language as LanguageCode, 'home.yesterday') || 'Dün' });
+          }
+        });
+      }
 
-        const [h, m] = time.split(':').map(Number);
-        const timeMinutes = h * 60 + m;
-        
-        let diff = timeMinutes - currentMinutes;
-        
-        if (diff < -720) diff += 1440;
-        else if (diff > 720) diff -= 1440;
+      // 2. BUGÜNÜ KONTROL ET
+      let isForToday = false;
+      if (med.intervalDays && med.intervalDays > 1) {
+        const start = new Date(med.startDate).setHours(0,0,0,0);
+        const todayDate = new Date().setHours(0,0,0,0);
+        const daysDiff = Math.floor((todayDate - start) / (1000 * 60 * 60 * 24));
+        if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForToday = true;
+      } else {
+        isForToday = true;
+      }
 
-        if (diff < -OVERDUE_THRESHOLD_MINUTES) {
-          // Süresi 30 dk'dan fazla geçmiş → "Süresi Geçti"
-          overdue.push({ med, time, timeMinutes, diff });
-        } else if (diff >= -OVERDUE_THRESHOLD_MINUTES && diff <= UPCOMING_WINDOW_MINUTES) {
-          // -30 ile +240 dakika arası → "Yaklaşan"
-          upcoming.push({ med, time, timeMinutes, diff });
-        }
-      });
+      if (isForToday) {
+        (med.times || []).forEach((time) => {
+          const isTakenToday = logs.some((l) => 
+            l.medicationId === med.id && 
+            l.expectedTime === time && 
+            (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr))) &&
+            l.status === 'taken'
+          );
+
+          if (isTakenToday) return;
+
+          const [h, m] = time.split(':').map(Number);
+          const timeMinutes = h * 60 + m;
+          let diff = timeMinutes - currentMinutes;
+          
+          if (diff < -720) diff += 1440;
+          else if (diff > 720) diff -= 1440;
+
+          if (diff < 0) {
+            // Saati geçenler -> Süresi Geçti
+            overdue.push({ med, time, timeMinutes, diff });
+          } else if (diff <= UPCOMING_WINDOW_MINUTES) {
+            // Henüz saati gelmeyenler (veya tam şu an) -> Yaklaşan
+            upcoming.push({ med, time, timeMinutes, diff });
+          }
+        });
+      }
     });
 
     allMedications.filter(m => m.profileId === activeProfile?.id).forEach(med => {
@@ -256,7 +304,11 @@ export default function HomeScreen() {
                   <View style={styles.upcomingInfo}>
                     <Text style={styles.upcomingName}>{item.med.name}</Text>
                     <Text style={styles.upcomingDose}>{item.med.dosage} {item.med.unit}</Text>
-                    <Text style={styles.overdueAgo}>{timeAgoStr}</Text>
+                    {item.label ? (
+                      <Text style={styles.overdueAgo}>{item.label}</Text>
+                    ) : (
+                      <Text style={styles.overdueAgo}>{timeAgoStr}</Text>
+                    )}
                   </View>
                   <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time, item.diff)}>
                     <Text style={styles.takeBtnEmoji}>✓</Text>
