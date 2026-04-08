@@ -67,7 +67,7 @@ export const getProfiles = async (userId: string): Promise<Profile[]> => {
   const firestore = getDb();
   if (!firestore) return [];
   try {
-    const q = query(collection(firestore, 'profiles'), where('userId', '==', userId), orderBy('createdAt', 'asc'));
+    const q = query(collection(firestore, 'profiles'), where('userId', '==', userId));
     const snapshot = await getDocs(q);
     return snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Profile));
   } catch (_err) {

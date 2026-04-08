@@ -368,6 +368,14 @@ export default function MedicationDetailScreen() {
               </View>
             </View>
 
+            <View style={styles.editInfo}>
+              <Text style={styles.editInfoText}>
+                💡 {lang === 'tr' 
+                  ? 'Durumu değiştirmek için ikonlara dokunabilirsiniz.' 
+                  : 'You can tap the icons to change the status.'}
+              </Text>
+            </View>
+
             <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 420 }}>
               {trackingDays.length === 0 ? (
                 <View style={{ alignItems: 'center', padding: SPACING.xxl }}>
@@ -536,6 +544,20 @@ const getStyles = (colors: any) => StyleSheet.create({
   trackingSlot: { alignItems: 'center', gap: 2, padding: 4 },
   trackingSlotTime: { fontSize: 10, color: '#888' },
   trackingSlotIcon: { fontSize: 18 },
+  editInfo: {
+    backgroundColor: colors.primary + '11',
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    marginBottom: SPACING.md,
+    borderWidth: 1,
+    borderColor: colors.primary + '33',
+  },
+  editInfoText: {
+    fontSize: TYPOGRAPHY.fontSizeXs,
+    color: colors.primary,
+    textAlign: 'center',
+    fontWeight: TYPOGRAPHY.fontWeightMedium,
+  },
   modalCloseBtn: { borderRadius: RADIUS.lg, padding: SPACING.lg, alignItems: 'center', marginTop: SPACING.lg },
   modalCloseBtnText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: '#fff' },
 });

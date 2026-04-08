@@ -53,7 +53,7 @@ export default function LoginScreen() {
       let allMeds: any[] = [];
       let allLogs: any[] = [];
       for (const p of userProfiles) {
-        const meds = await getMedications(p.id);
+        const meds = await getMedications(p.id, null); // Fetch all (active + archived)
         allMeds = [...allMeds, ...meds];
         const logs = await getMedicationLogs(p.id);
         allLogs = [...allLogs, ...logs];

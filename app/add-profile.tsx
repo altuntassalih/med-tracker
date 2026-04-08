@@ -61,17 +61,22 @@ export default function AddProfileScreen() {
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Avatar Seç</Text>
-          <View style={styles.avatarRow}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            style={styles.avatarPicker}
+            contentContainerStyle={{ paddingRight: SPACING.xl }}
+          >
             {AVATAR_OPTIONS.map((emoji) => (
               <TouchableOpacity
                 key={emoji}
-                style={[styles.avatarOption, selectedAvatar === emoji && styles.avatarOptionActive]}
+                style={[styles.emojiBtn, selectedAvatar === emoji && styles.emojiBtnActive]}
                 onPress={() => setSelectedAvatar(emoji)}
               >
-                <Text style={styles.avatarEmoji}>{emoji}</Text>
+                <Text style={styles.emojiText}>{emoji}</Text>
               </TouchableOpacity>
             ))}
-          </View>
+          </ScrollView>
         </View>
 
         <View style={styles.fieldGroup}>
@@ -139,14 +144,14 @@ const getStyles = (colors: any) => StyleSheet.create({
     color: colors.textSecondary, marginBottom: SPACING.sm,
     textTransform: 'uppercase', letterSpacing: 0.5,
   },
-  avatarRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm },
-  avatarOption: {
-    width: 56, height: 56, borderRadius: RADIUS.md,
-    backgroundColor: colors.surface, borderWidth: 2, borderColor: colors.surfaceBorder,
-    alignItems: 'center', justifyContent: 'center',
+  avatarPicker: { flexDirection: 'row', paddingVertical: SPACING.sm },
+  emojiBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center',
+    marginRight: SPACING.sm, borderWidth: 1, borderColor: colors.surfaceBorder,
   },
-  avatarOptionActive: { borderColor: colors.primary, backgroundColor: colors.primary + '22' },
-  avatarEmoji: { fontSize: 28 },
+  emojiBtnActive: { borderColor: colors.primary, backgroundColor: colors.primary + '22' },
+  emojiText: { fontSize: 24 },
   input: {
     backgroundColor: colors.surface, borderRadius: RADIUS.md,
     padding: SPACING.lg, color: colors.textPrimary, fontSize: TYPOGRAPHY.fontSizeMd,

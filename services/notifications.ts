@@ -140,14 +140,18 @@ export const scheduleMedicationNotification = async (
         hour: triggerHour,
         minute: triggerMinute,
         repeats: true,
-        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+        ...(Platform.OS === 'android' && { 
+          channelId: NOTIFICATION_CHANNEL_ID,
+        }),
       };
     } else {
       trigger = {
         hour: triggerHour,
         minute: triggerMinute,
         repeats: true,
-        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+        ...(Platform.OS === 'android' && { 
+          channelId: NOTIFICATION_CHANNEL_ID,
+        }),
       };
     }
 
@@ -263,23 +267,9 @@ export const scheduleEndOfDayMissedNotification = async (
   // Kullanıcı İsteği: 23:59'da bildirim at, eğer sessiz saatler aktifse ve içindeyse.
   // Sessiz saatler aktifse ve 23:59'dan önce başlıyorsa, sessiz saatlerden 5 dk önce at.
   
+  // Kural: Sadece 23:59'da o güne ait alınmamış ilaç varsa çıkacak.
   let targetHour = 23;
   let targetMinute = 59;
-  
-  if (state.quietHoursEnabled) {
-    const quietStartTotalMin = quietHoursStart * 60 + quietHoursStartMinute;
-    const targetTotalMin = 23 * 60 + 59;
-    
-    // Eğer sessiz saatler 00:00'dan önce başlıyorsa (örn 22:00) 
-    // ve hedefimiz (23:59) bu aralığa düşüyorsa
-    if (quietStartTotalMin < targetTotalMin && quietStartTotalMin > 0) {
-      // Sessiz saat başlangıcından 5 dk önce
-      let totalMinutes = quietStartTotalMin - END_OF_DAY_LEAD_MINUTES;
-      if (totalMinutes < 0) totalMinutes += 24 * 60;
-      targetHour = Math.floor(totalMinutes / 60);
-      targetMinute = totalMinutes % 60;
-    }
-  }
 
   const title = lang === 'tr' ? '⏰ Unutmayın!' : '⏰ Reminder!';
   const body = lang === 'tr'
