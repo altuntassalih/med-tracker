@@ -11,6 +11,7 @@ import {
   cancelMedicationNotifications,
   cancelAllNotifications,
   scheduleEndOfDayMissedNotification,
+  checkAndRefreshEndOfDayNotification,
 } from '../services/notifications';
 import { useStore } from '../store/useStore';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -43,6 +44,53 @@ export default function RootLayout() {
   const lastProcessedDateRef = useRef<string>('');
 
   const colors = getThemeColors(theme);
+
+  // ---- Tüm Bildirimleri Yeniden Zamanla ----
+  // Telefon yeniden başlatıldığında veya uygulama açıldığında çağrılır.
+  // Android, restart sonrası zamanlanmış bildirimleri siler - bu fonksiyon onları geri yükler.
+  const rescheduleAllNotifications = async () => {
+    const state = useStore.getState();
+    if (!state.notificationsEnabled) return;
+
+    const activeMeds = (state.medications || []).filter((m) => m.isActive !== false);
+    if (activeMeds.length === 0) return;
+
+    try {
+      const hasPermission = await requestNotificationPermission();
+      if (!hasPermission) return;
+
+      await cancelAllNotifications();
+
+      for (const med of activeMeds) {
+        for (const t of (med.times || [])) {
+          await scheduleMedicationNotification(
+            med.id,
+            med.name,
+            med.dosage,
+            t,
+            state.language as 'tr' | 'en',
+            med.intervalDays,
+            med.startDate
+          );
+        }
+      }
+
+      // 23:59 - Alınmayan ilaçlar için gün sonu bildirimi
+      await scheduleEndOfDayMissedNotification(
+        state.quietHoursStart,
+        state.quietHoursStartMinute,
+        state.autoMarkMissedAsTaken,
+        state.language as 'tr' | 'en'
+      );
+
+      // Tüm ilaçlar alındıysa 23:59 bildirimini iptal et
+      await checkAndRefreshEndOfDayNotification(state.language as 'tr' | 'en');
+
+      console.log('[Notifications] Tüm bildirimler yeniden zamanlandı.');
+    } catch (_err) {
+      // Sessizce geç
+    }
+  };
 
   // ---- Gün Sonu Kontrolü ----
   const processMissedMedications = async () => {
@@ -102,8 +150,8 @@ export default function RootLayout() {
       }
     }
 
-    // Sessiz saat öncesi bildirimi güncelle
-    if (notificationsEnabled) {
+    // Yeni gün başladığında gün sonu bildirimini yenile
+    if (state.notificationsEnabled) {
       scheduleEndOfDayMissedNotification(
         state.quietHoursStart,
         state.quietHoursStartMinute,
@@ -119,8 +167,10 @@ export default function RootLayout() {
         appStateRef.current.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
-        // Arka plandan öne geçince gün sonu kontrolü yap
+        // Arka plandan öne geçince: gün sonu kontrolü + bildirimleri yenile
+        // (telefon restart sonrası da bu tetiklenir)
         processMissedMedications();
+        rescheduleAllNotifications();
       }
       appStateRef.current = nextAppState;
     };
@@ -149,6 +199,7 @@ export default function RootLayout() {
             });
 
             if (medications.length === 0) {
+              // İlk açılış veya temiz yükleme: Firestore'dan senkronize et
               setIsSyncing(true);
               try {
                 const userProfiles = await getProfiles(firebaseUser.uid);
@@ -166,51 +217,17 @@ export default function RootLayout() {
                   }
                   setMedications(allMeds);
                   setMedicationLogs(allLogs);
-
-                  // Bildirimleri yenile
-                  try {
-                    const hasPermission = await requestNotificationPermission();
-                    if (hasPermission) {
-                      await cancelAllNotifications();
-                      const currentState = useStore.getState();
-                      for (const med of allMeds) {
-                        if (med.isActive !== false) {
-                          for (const t of (med.times || [])) {
-                            await scheduleMedicationNotification(
-                              med.id,
-                              med.name,
-                              med.dosage,
-                              t,
-                              currentState.language as 'tr' | 'en',
-                              med.intervalDays,
-                              med.startDate
-                            );
-                          }
-                        }
-                      }
-                      // Gün sonu bildirimi zamanlama
-                      await scheduleEndOfDayMissedNotification(
-                        currentState.quietHoursStart,
-                        currentState.quietHoursStartMinute,
-                        currentState.autoMarkMissedAsTaken,
-                        currentState.language as 'tr' | 'en'
-                      );
-                    }
-                  } catch (_notifErr) {
-                    // Bildirim yenileme hatası — sessizce geç
-                  }
-
-                  // Uygulama açıldığında gün sonu kontrolü
-                  setTimeout(() => processMissedMedications(), 1500);
                 }
               } catch (_syncErr) {
               } finally {
                 setIsSyncing(false);
               }
-            } else {
-              // Medications zaten yüklü: gün sonu kontrolü yap
-              setTimeout(() => processMissedMedications(), 1000);
             }
+
+            // Her açılışta bildirimleri yenile (restart sonrası dahil)
+            setTimeout(() => rescheduleAllNotifications(), 1000);
+            // Dün alınmayan ilaçları logla
+            setTimeout(() => processMissedMedications(), 1500);
           }
           setIsAuthReady(true);
         });

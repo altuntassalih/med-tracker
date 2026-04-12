@@ -32,6 +32,7 @@ export const translations = {
       overdueTitle: 'Süresi Geçenler',
       overdueNoAction: 'Bugün için işaretlenmemiş ilaç yok',
       unmarkedNotif: 'Bugün içinde alınmamış ilaçlarınız var. Kontrol edin.',
+      yesterday: 'Dün (Geçmiş)',
     },
     settings: {
       title: 'Ayarlar',
@@ -251,6 +252,7 @@ export const translations = {
       overdueTitle: 'Overdue',
       overdueNoAction: 'No unmarked medications for today',
       unmarkedNotif: 'You have medications you have not marked today. Please check.',
+      yesterday: 'Yesterday',
     },
     settings: {
       title: 'Settings',

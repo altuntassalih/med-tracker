@@ -13,7 +13,7 @@ import {
   MEDICATION_TYPES, DOSE_UNITS, FREQUENCY_OPTIONS, INTERVAL_OPTIONS
 } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
-import { formatDate } from '../utils/date';
+import { formatDate, getLocalDateString } from '../utils/date';
 import { getMedicationSuggestions } from '../services/suggest-service';
 
 const COMMON_MEDICATIONS = [
@@ -67,7 +67,7 @@ export default function AddMedicationScreen() {
   const [frequency, setFrequency] = useState(existingMed ? existingMed.times.length : 1);
   const [times, setTimes] = useState(existingMed?.times || ['08:00']);
   const [notes, setNotes] = useState(existingMed?.notes || '');
-  const [startDate, setStartDate] = useState(templateId ? new Date().toISOString().split('T')[0] : (existingMed?.startDate || new Date().toISOString().split('T')[0]));
+  const [startDate, setStartDate] = useState(templateId ? getLocalDateString() : (existingMed?.startDate || getLocalDateString()));
   const [isSaving, setIsSaving] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);

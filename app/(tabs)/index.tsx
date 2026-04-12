@@ -15,6 +15,7 @@ import { getMedications, Medication, addMedicationLog, MedicationLog } from '../
 import { checkAndRefreshEndOfDayNotification } from '../../services/notifications';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
+import { getLocalDateString } from '../../utils/date';
 
 const { width } = Dimensions.get('window');
 
@@ -50,23 +51,8 @@ export default function HomeScreen() {
   const medications = (allMedications || []).filter(m => m.profileId === activeProfile?.id && m.isActive !== false);
   const logs = (medicationLogs || []).filter(l => l.profileId === activeProfile?.id);
 
-  const getTodayStr = () => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = (d.getMonth() + 1).toString().padStart(2, '0');
-    const day = d.getDate().toString().padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-  const getYesterdayStr = () => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    const year = d.getFullYear();
-    const month = (d.getMonth() + 1).toString().padStart(2, '0');
-    const day = d.getDate().toString().padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-  const todayStr = getTodayStr();
-  const yesterdayStr = getYesterdayStr();
+  const todayStr = getLocalDateString();
+  const yesterdayStr = getLocalDateString(new Date(Date.now() - 86400000));
 
   useFocusEffect(
     useCallback(() => {
@@ -86,19 +72,18 @@ export default function HomeScreen() {
     let targetStr = todayStr;
     
     if (diff !== undefined) {
-      if (diff < 0) {
+      if (diff === -2000) {
+        // Özel marker: Bu bir dünün ilacıdır
+        targetStr = yesterdayStr;
+      } else if (diff < 0) {
         const [h, m] = time.split(':').map(Number);
         const timeMinutes = h * 60 + m;
         const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes();
         
-        // Eğer geç kalan bir ilacı işaretliyorsak ve saati şu andan ilerideyse (gece yarısını geçmiştir), 
-        // VEYA özel olarak dünün ilacı olduğunu belirten -2000 diff değerine sahipse, dünün ilacıdır.
-        if (timeMinutes > currentMinutes || diff === -2000) {
+        // Eğer geç kalan bir ilacı işaretliyorsak ve saati şu andan ilerideyse (gece yarısını geçmiştir), dünün ilacıdır
+        if (timeMinutes > currentMinutes) {
           targetStr = yesterdayStr;
         }
-      } else if (diff > 1440) {
-        // Dünün ilacı olarak işaretlenmişse
-        targetStr = yesterdayStr;
       }
     }
 

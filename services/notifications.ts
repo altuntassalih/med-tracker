@@ -5,10 +5,12 @@ import { useStore } from '../store/useStore';
 const NOTIFICATION_LEAD_MINUTES = 5;
 const NOTIFICATION_CHANNEL_ID = 'med-tracker-default';
 const END_OF_DAY_NOTIF_DATA_KEY = 'end-of-day-missed-notif';
-const END_OF_DAY_LEAD_MINUTES = 5;
+// Gün sonu bildirimi saati: 23:59 — alınmayan ilaçlar için kritik hatırlatıcı
+// Not: quiet hours kontrolü bu bildirimde uygulanmaz
+const END_OF_DAY_HOUR = 23;
+const END_OF_DAY_MINUTE = 59;
 
 // ---- expo-notifications dinamik import ----
-// Hem Expo Go hem de standalone build'de çalışacak şekilde
 let Notifications: any = null;
 let SchedulableTriggerInputTypes: any = null;
 let AndroidImportance: any = null;
@@ -33,7 +35,6 @@ try {
 }
 
 // ---- Kanal oluşturma (Android 8+) ----
-// İzin istemeden ÖNCE çağrılmalı
 const ensureAndroidChannel = async () => {
   if (!Notifications || Platform.OS !== 'android') return;
   try {
@@ -55,15 +56,31 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
   if (!Notifications) return false;
 
   try {
-    // Android 8+ için önce kanal oluştur (izin dialog'u için gerekli)
     await ensureAndroidChannel();
 
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
 
     if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
+      const { status } = await Notifications.requestPermissionsAsync({
+        android: {
+          allowAlert: true,
+          allowBadge: true,
+          allowSound: true,
+          allowAnnouncements: true,
+        },
+      });
       finalStatus = status;
+    }
+
+    // Android 12+ için SCHEDULE_EXACT_ALARM izni
+    if (Platform.OS === 'android' && Notifications.requestPermissionsAsync) {
+      try {
+        // Exact alarm izni ayrıca istenmeli (Android 12+)
+        await Notifications.requestPermissionsAsync({
+          android: { allowAlert: true, allowBadge: true, allowSound: true },
+        });
+      } catch (_e) { /* no-op */ }
     }
 
     return finalStatus === 'granted';
@@ -73,9 +90,11 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
 };
 
 /**
- * Verilen saat (HH:MM) için NOTIFICATION_LEAD_MINUTES dk öncesine günlük tekrar bildirim zamanlar.
+ * SDK 54 için doğru trigger tipi:
+ *   - Günlük tekrar: SchedulableTriggerInputTypes.CALENDAR (type: 'calendar') + hour + minute + repeats: true
+ *   - Anında/aralıklı: SchedulableTriggerInputTypes.TIME_INTERVAL (type: 'timeInterval') + seconds
  *
- * SDK 54 doğru trigger formatı: SchedulableTriggerInputTypes.DAILY + channelId trigger'da
+ * İlaç vaktinden NOTIFICATION_LEAD_MINUTES dk önce günlük bildirim zamanlar.
  */
 export const scheduleMedicationNotification = async (
   medicationId: string,
@@ -103,7 +122,7 @@ export const scheduleMedicationNotification = async (
     const triggerHour = Math.floor(totalMinutes / 60);
     const triggerMinute = totalMinutes % 60;
 
-    // Sessiz saat kontrolü (Dakika hassasiyetiyle)
+    // Sessiz saat kontrolü
     const quietStartH = state.quietHoursStart;
     const quietStartM = state.quietHoursStartMinute || 0;
     const quietEndH = state.quietHoursEnd;
@@ -125,49 +144,55 @@ export const scheduleMedicationNotification = async (
     }
 
     if (isQuietEnabled && isQuiet) {
-      // TEST IÇIN: Neden sustuğunu konsola yazdır (Daha sonra silinecek)
       console.log(`[Notification] Skip: Trigger ${triggerHour}:${triggerMinute} in Quiet Hours (${quietStartH}:${quietStartM} - ${quietEndH}:${quietEndM})`);
       return 'quiet_hours';
     }
 
-    // Bu ilacın bu vakti için BENZERSIZ bir identifier oluştur (Örn: med-ID-0800)
+    // Bu ilacın bu vakti için BENZERSIZ identifier
     const identifierStr = `med-${medicationId}-${time.replace(':', '')}`;
 
-    // SDK 54 doğru trigger formatı + Android EXACT alarm
+    // SDK 54 doğru trigger — CALENDAR tipi günlük tekrar için
+    // Haftalık için sadece 'daily' type ile weekday desteklenmez, ayrı planla
+    const calendarTriggerType = SchedulableTriggerInputTypes?.CALENDAR ?? 'calendar';
+
     let trigger: any;
+
     if (intervalDays === 7) {
+      // Haftalık: startDate'den weekday hesapla
+      // Not: JS getDay() — 0=Pazar...6=Cumartesi; Expo weekday: 1=Pazar...7=Cumartesi
       const startD = new Date(startDate + 'T12:00:00');
-      const weekday = startD.getDay() + 1;
+      const jsWeekday = startD.getDay(); // 0-6
+      const expoWeekday = jsWeekday === 0 ? 1 : jsWeekday + 1; // Expo formatı (1=Pazar)
+
       trigger = {
-        type: SchedulableTriggerInputTypes?.DAILY ?? 'daily',
-        weekday,
+        type: calendarTriggerType,
+        weekday: expoWeekday,
         hour: triggerHour,
         minute: triggerMinute,
+        second: 0, // SDK 54: second belirtilmeli
         repeats: true,
-        ...(Platform.OS === 'android' && { 
-          channelId: NOTIFICATION_CHANNEL_ID,
-        }),
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
       };
     } else {
+      // Günlük (intervalDays=1) veya diğer aralıklar için günlük bildirim
       trigger = {
-        type: SchedulableTriggerInputTypes?.DAILY ?? 'daily',
+        type: calendarTriggerType,
         hour: triggerHour,
         minute: triggerMinute,
+        second: 0, // SDK 54: second belirtilmeli
         repeats: true,
-        ...(Platform.OS === 'android' && { 
-          channelId: NOTIFICATION_CHANNEL_ID,
-        }),
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
       };
     }
 
-    // Önce aynı kimlikli varsa iptal et (Overwrite bazen Android'de fail edebiliyor)
-    try { await Notifications.cancelScheduledNotificationAsync(identifierStr); } catch(e){}
+    // Önce aynı kimlikli varsa iptal et
+    try { await Notifications.cancelScheduledNotificationAsync(identifierStr); } catch (_e) {}
 
     await Notifications.scheduleNotificationAsync({
       identifier: identifierStr,
       content: {
         title: lang === 'tr' ? '💊 İlaç Vakti Yaklaşıyor!' : '💊 Medication Time Approaching!',
-        body: lang === 'tr' 
+        body: lang === 'tr'
           ? `${medicationName} (${dosage}) için ${NOTIFICATION_LEAD_MINUTES} dakika kaldı.`
           : `${NOTIFICATION_LEAD_MINUTES} minutes left for ${medicationName} (${dosage}).`,
         data: { medicationId, type: 'med-warning' },
@@ -177,21 +202,23 @@ export const scheduleMedicationNotification = async (
       trigger,
     });
 
-    // Kullanıcı talebi: İlaç eklendiğinde/güncellendiğinde 5 dk'dan az vakit kalmışsa ANINDA BİLDİRİM at
+    console.log(`[Notification] Scheduled daily: ${medicationName} @ ${triggerHour}:${String(triggerMinute).padStart(2,'0')} (med time: ${time})`);
+
+    // İlaç eklendiğinde/güncellendiğinde 5 dk veya daha az vakit kaldıysa ANINDA BİLDİRİM
     const now = new Date();
-    const currentH = now.getHours();
-    const currentM = now.getMinutes();
-    const currentTotalMin = currentH * 60 + currentM;
+    const currentTotalMin = now.getHours() * 60 + now.getMinutes();
     const targetMedTotalMin = originalHour * 60 + originalMinute;
-    
+
     let minutesLeft = targetMedTotalMin - currentTotalMin;
     if (minutesLeft < 0) minutesLeft += 24 * 60;
-    
-    // Eğer ilaç alımına şu anda 5 dk veya daha az kaldıysa (örneğin 09:56'da 10:00 ilacı eklenirse)
-    if (minutesLeft > 0 && minutesLeft <= 5) {
-      console.log(`[Notification] Firing Immediate 5-min warning for ${medicationName} (Minutes left: ${minutesLeft})`);
+
+    if (minutesLeft > 0 && minutesLeft <= NOTIFICATION_LEAD_MINUTES) {
+      const timeIntervalType = SchedulableTriggerInputTypes?.TIME_INTERVAL ?? 'timeInterval';
+      const immediateIdentifier = `med-immed-${medicationId}-${time.replace(':', '')}`;
+      try { await Notifications.cancelScheduledNotificationAsync(immediateIdentifier); } catch (_e) {}
+
       await Notifications.scheduleNotificationAsync({
-        identifier: `med-immed-${medicationId}-${time.replace(':', '')}`,
+        identifier: immediateIdentifier,
         content: {
           title: lang === 'tr' ? '🚨 Az Önce Kuruldu!' : '🚨 Scheduled Just Now!',
           body: lang === 'tr'
@@ -201,12 +228,19 @@ export const scheduleMedicationNotification = async (
           sound: 'default',
           priority: 'max',
         },
-        trigger: null, // Hemen at
+        // SDK 54: null trigger geçersiz, 2 saniye sonra at
+        trigger: {
+          type: timeIntervalType,
+          seconds: 2,
+          repeats: false,
+          ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+        },
       });
     }
 
     return identifierStr;
   } catch (err) {
+    console.log('[Notification] Schedule error:', err);
     return 'error';
   }
 };
@@ -236,10 +270,10 @@ export const cancelAllNotifications = async (): Promise<void> => {
 };
 
 /**
- * Sessiz saatlerin başlangıcından END_OF_DAY_LEAD_MINUTES dk önce
- * "işaretlenmemiş ilaçlarınız var" bildirimi zamanlar.
+ * 23:59'da günlük "alınmamış ilaç" bildirimi zamanlar.
+ * autoMarkMissedAsTaken=true ise bildirim zamanlanmaz.
  *
- * autoMarkMissedAsTaken=true ise bildirim zamanlanmaz (otomatik işaretlenecek).
+ * SDK 54: CALENDAR trigger type kullanılmalı.
  */
 export const scheduleEndOfDayMissedNotification = async (
   quietHoursStart: number,
@@ -249,12 +283,11 @@ export const scheduleEndOfDayMissedNotification = async (
 ): Promise<void> => {
   if (!Notifications) return;
 
-  // Önceki gün sonu bildirimini iptal et (Identifier üzerinden)
+  // Önceki gün sonu bildirimini iptal et
   try {
     await Notifications.cancelScheduledNotificationAsync(END_OF_DAY_NOTIF_DATA_KEY);
   } catch (_err) { /* no-op */ }
 
-  // autoMarkMissedAsTaken=true ise bildirim gerekmez
   if (autoMarkMissedAsTaken) return;
 
   const state = useStore.getState();
@@ -262,12 +295,12 @@ export const scheduleEndOfDayMissedNotification = async (
 
   await ensureAndroidChannel();
 
-  // Kullanıcı İsteği: 23:59'da bildirim at, eğer sessiz saatler aktifse ve içindeyse.
-  // Sessiz saatler aktifse ve 23:59'dan önce başlıyorsa, sessiz saatlerden 5 dk önce at.
-  
-  // Kural: Sadece 23:59'da o güne ait alınmamış ilaç varsa çıkacak.
-  let targetHour = 23;
-  let targetMinute = 59;
+  // Gün sonu bildirimi SABİT saat olarak tanımlandı (sessiz saati bypass eder)
+  // END_OF_DAY_HOUR:END_OF_DAY_MINUTE — genellikle 22:00
+  // Not: 23:59 varsayılan sessiz saat aralığına (23:00-07:00) girdiğinden
+  // ilaç hatırlatıcısını 22:00'de gönderiyoruz.
+  const targetHour = END_OF_DAY_HOUR;
+  const targetMinute = END_OF_DAY_MINUTE;
 
   const title = lang === 'tr' ? '⏰ Unutmayın!' : '⏰ Reminder!';
   const body = lang === 'tr'
@@ -275,6 +308,8 @@ export const scheduleEndOfDayMissedNotification = async (
     : 'You have medications you have not marked today. Please check.';
 
   try {
+    const calendarTriggerType = SchedulableTriggerInputTypes?.CALENDAR ?? 'calendar';
+
     await Notifications.scheduleNotificationAsync({
       identifier: END_OF_DAY_NOTIF_DATA_KEY,
       content: {
@@ -285,21 +320,24 @@ export const scheduleEndOfDayMissedNotification = async (
         priority: 'max',
       },
       trigger: {
+        type: calendarTriggerType,
         hour: targetHour,
         minute: targetMinute,
+        second: 0, // SDK 54: second belirtilmeli
         repeats: true,
         ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
       },
     });
-    console.log(`[Notification] EndOfDay scheduled at ${targetHour}:${targetMinute}`);
-  } catch (_err) {
-    // Bildirim zamanlama hatası
+
+    console.log(`[Notification] EndOfDay scheduled at ${targetHour}:${targetMinute} (type: ${calendarTriggerType})`);
+  } catch (err) {
+    console.log('[Notification] EndOfDay schedule error:', err);
   }
 };
 
 /**
- * Güncel state'i kontrol eder, eğer o gün için alınmamış/bekleyen ilaç YOKSA
- * gün sonu bildirimini iptal eder. Eğer bekleyen varsa planlamasını sağlar.
+ * Güncel state'i kontrol eder, alınmamış ilaç YOKSA 23:59 bildirimini iptal eder,
+ * varsa yeniden planlar.
  */
 export const checkAndRefreshEndOfDayNotification = async (lang: 'tr' | 'en' = 'tr'): Promise<void> => {
   const state = useStore.getState();
@@ -311,7 +349,6 @@ export const checkAndRefreshEndOfDayNotification = async (lang: 'tr' | 'en' = 't
   const month = (now.getMonth() + 1).toString().padStart(2, '0');
   const day = now.getDate().toString().padStart(2, '0');
   const todayStr = `${year}-${month}-${day}`;
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
   let hasUntaken = false;
 
@@ -321,49 +358,51 @@ export const checkAndRefreshEndOfDayNotification = async (lang: 'tr' | 'en' = 't
   medications.forEach((med) => {
     // Aralık kontrolü
     if (med.intervalDays && med.intervalDays > 1) {
-      const start = new Date(med.startDate).setHours(0,0,0,0);
-      const today = new Date().setHours(0,0,0,0);
+      const start = new Date(med.startDate).setHours(0, 0, 0, 0);
+      const today = new Date().setHours(0, 0, 0, 0);
       const daysDiff = Math.floor((today - start) / (1000 * 60 * 60 * 24));
       if (daysDiff % med.intervalDays !== 0) return;
     }
 
     (med.times || []).forEach((time) => {
-      // Bugün alındı mı? (scheduledDate eksik olabilir, eski kayıtlar için de fallback yap)
-      const isTakenToday = logs.some((l) => 
-        l.medicationId === med.id && 
-        l.expectedTime === time && 
+      const isTakenToday = logs.some((l) =>
+        l.medicationId === med.id &&
+        l.expectedTime === time &&
         (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr))) &&
         l.status === 'taken'
       );
 
       if (!isTakenToday) {
-        // Alınmadı. Sadece bugüne ait olması veya vaktinin geçmiş olması da önemli olabilir,
-        // Ancak bu ilaç bugün alınmadıysa ve bugün için aktifse hasUntaken true olur.
         hasUntaken = true;
       }
     });
   });
 
   if (!hasUntaken) {
-    // Tüm ilaçlar alınmış, 23:59 bildirimini iptal et!
     if (!Notifications) return;
     try {
       await Notifications.cancelScheduledNotificationAsync(END_OF_DAY_NOTIF_DATA_KEY);
+      console.log('[Notification] EndOfDay cancelled — all meds taken.');
     } catch (_err) { /* no-op */ }
   } else {
-    // Bekleyen var, bildirimi kur (Zaten varsa overwrite edecek, sorun değil, ID sabit)
-    scheduleEndOfDayMissedNotification(state.quietHoursStart, state.quietHoursStartMinute, state.autoMarkMissedAsTaken, lang);
+    scheduleEndOfDayMissedNotification(
+      state.quietHoursStart,
+      state.quietHoursStartMinute,
+      state.autoMarkMissedAsTaken,
+      lang
+    );
   }
 };
 
 /**
  * Test amaçlı: 5 saniye sonra bildirim gönderir.
- * Build aldıktan sonra çalışıp çalışmadığını doğrulamak için kullanın.
  */
 export const scheduleTestNotification = async (): Promise<void> => {
   if (!Notifications) return;
   await ensureAndroidChannel();
   try {
+    const timeIntervalType = SchedulableTriggerInputTypes?.TIME_INTERVAL ?? 'timeInterval';
+
     await Notifications.scheduleNotificationAsync({
       content: {
         title: '✅ Bildirim Testi',
@@ -372,12 +411,14 @@ export const scheduleTestNotification = async (): Promise<void> => {
         data: { test: true },
       },
       trigger: {
-        type: SchedulableTriggerInputTypes?.TIME_INTERVAL ?? 'timeInterval',
+        type: timeIntervalType,
         seconds: 5,
         ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
       },
     });
-  } catch (_err) {
-    // Test bildirim hatası
+
+    console.log('[Notification] Test notification scheduled (5s).');
+  } catch (err) {
+    console.log('[Notification] Test schedule error:', err);
   }
 };

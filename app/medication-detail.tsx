@@ -10,7 +10,7 @@ import { updateMedication, clearMedicationLogs, addMedicationLog, updateMedicati
 import { cancelMedicationNotifications, checkAndRefreshEndOfDayNotification } from '../services/notifications';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
-import { formatDate } from '../utils/date';
+import { formatDate, getLocalDateString } from '../utils/date';
 
 // Kaç günlük geçmiş gösterilecek
 const TRACKING_DAYS_COUNT = 30;
@@ -170,7 +170,7 @@ export default function MedicationDetailScreen() {
     for (let i = 0; i < TRACKING_DAYS_COUNT; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = getLocalDateString(d);
 
       // Aralıklı ilaç kontrolü
       if (medication.intervalDays && medication.intervalDays > 1) {
