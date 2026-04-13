@@ -42,6 +42,7 @@ function getTodayDate(lang: LanguageCode): string {
 export default function HomeScreen() {
   const { user, profiles, activeProfileId, setActiveProfileId, medications: allMedications, medicationLogs, addMedicationLogState, language, theme } = useStore();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [tick, setTick] = useState(0); // Her dakika UI'ı tazeler
 
   const colors = getThemeColors(theme);
   const styles = getStyles(colors);
@@ -60,6 +61,12 @@ export default function HomeScreen() {
       checkAndRefreshEndOfDayNotification(language as LanguageCode);
     }, [language])
   );
+
+  // Her 60 saniyede bir UI'ı tazele — ilaç durumu zaman bazlıdır
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // Kayıtlar değiştiğinde listeyi tazele (Sync fix)
   useEffect(() => {
@@ -138,7 +145,7 @@ export default function HomeScreen() {
           );
 
           if (!isTakenYesterday) {
-            // Dünden kalan ilaç -> Süresi geçti (Identifier olarak diff=2000 verelim ki dünün olduğu anlaşılsın)
+            // Dünden kalan ilaç -> Süresi geçti
             overdue.push({ med, time, timeMinutes: 0, diff: -2000, label: t(language as LanguageCode, 'home.yesterday') || 'Dün' });
           }
         });
@@ -173,19 +180,20 @@ export default function HomeScreen() {
           if (diff < -720) diff += 1440;
           else if (diff > 720) diff -= 1440;
 
-          if (diff < 0) {
-            // Saati geçenler -> Süresi Geçti
+          if (diff < -OVERDUE_THRESHOLD_MINUTES) {
+            // OVERDUE_THRESHOLD_MINUTES dk geçtikten sonra -> Süresi Geçti
             overdue.push({ med, time, timeMinutes, diff });
           } else if (diff <= UPCOMING_WINDOW_MINUTES) {
-            // Henüz saati gelmeyenler (veya tam şu an) -> Yaklaşan
+            // Henüz saati gelmeyenler veya grace period içindekiler -> Yaklaşan
             upcoming.push({ med, time, timeMinutes, diff });
           }
         });
       }
     });
 
-    allMedications.filter(m => m.profileId === activeProfile?.id).forEach(med => {
-      (med.times || []).forEach(time => {
+    // Tamamlananlar: filtrelenmiş medications listesinden al (çifter olmasın)
+    medications.forEach((med) => {
+      (med.times || []).forEach((time) => {
         const isTakenToday = logs.some((l) => 
           l.medicationId === med.id && 
           l.expectedTime === time && 
