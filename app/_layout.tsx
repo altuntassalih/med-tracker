@@ -167,10 +167,10 @@ export default function RootLayout() {
         appStateRef.current.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
-        // Arka plandan öne geçince: gün sonu kontrolü + bildirimleri yenile
-        // (telefon restart sonrası da bu tetiklenir)
+        // Arka plandan öne geçince sadece gün sonu kontrolü yap
+        // Not: rescheduleAllNotifications BURAYA EKLEME — her ekran açılışında
+        // immediate bildirim tetikleniyordu
         processMissedMedications();
-        rescheduleAllNotifications();
       }
       appStateRef.current = nextAppState;
     };

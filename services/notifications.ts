@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import { useStore } from '../store/useStore';
 
 // ---- Sabitler ----
-const NOTIFICATION_LEAD_MINUTES = 5;
+const NOTIFICATION_LEAD_MINUTES = 0; // Tam saatinde bildirim gönder
 const NOTIFICATION_CHANNEL_ID = 'med-tracker-default';
 const END_OF_DAY_NOTIF_DATA_KEY = 'end-of-day-missed-notif';
 // Gün sonu bildirimi saati: 23:59 — alınmayan ilaçlar için kritik hatırlatıcı
@@ -215,10 +215,10 @@ export const scheduleMedicationNotification = async (
     await Notifications.scheduleNotificationAsync({
       identifier: identifierStr,
       content: {
-        title: lang === 'tr' ? '💊 İlaç Vakti Yaklaşıyor!' : '💊 Medication Time Approaching!',
+        title: lang === 'tr' ? '💊 İlaç Zamanı!' : '💊 Medication Time!',
         body: lang === 'tr'
-          ? `${medicationName} (${dosage}) için ${NOTIFICATION_LEAD_MINUTES} dakika kaldı.`
-          : `${NOTIFICATION_LEAD_MINUTES} minutes left for ${medicationName} (${dosage}).`,
+          ? `${medicationName} (${dosage}) alma zamanı.`
+          : `Time to take ${medicationName} (${dosage}).`,
         data: { medicationId, type: 'med-warning' },
         sound: 'default',
         priority: 'max',
@@ -226,41 +226,7 @@ export const scheduleMedicationNotification = async (
       trigger,
     });
 
-    console.log(`[Notification] ✅ Zamanlandı: ${medicationName} @ ilaç=${time}, bildirim=${triggerHour}:${String(triggerMinute).padStart(2, '0')}`);
-
-    // İlaç eklendiğinde 5 dk veya daha az vakit kaldıysa ANINDA BİLDİRİM
-    const now = new Date();
-    const currentTotalMin = now.getHours() * 60 + now.getMinutes();
-    const targetMedTotalMin = originalHour * 60 + originalMinute;
-
-    let minutesLeft = targetMedTotalMin - currentTotalMin;
-    if (minutesLeft < 0) minutesLeft += 24 * 60;
-
-    if (minutesLeft > 0 && minutesLeft <= NOTIFICATION_LEAD_MINUTES) {
-      const timeIntervalType = SchedulableTriggerInputTypes?.TIME_INTERVAL ?? 'timeInterval';
-      const immediateIdentifier = `med-immed-${medicationId}-${time.replace(':', '')}`;
-      try { await Notifications.cancelScheduledNotificationAsync(immediateIdentifier); } catch (_e) {}
-
-      await Notifications.scheduleNotificationAsync({
-        identifier: immediateIdentifier,
-        content: {
-          title: lang === 'tr' ? '🚨 Az Önce Kuruldu!' : '🚨 Scheduled Just Now!',
-          body: lang === 'tr'
-            ? `${medicationName} (${dosage}) alımınıza ${minutesLeft} dakika kaldı!`
-            : `Only ${minutesLeft} minutes left for ${medicationName} (${dosage})!`,
-          data: { medicationId },
-          sound: 'default',
-          priority: 'max',
-        },
-        trigger: {
-          type: timeIntervalType,
-          seconds: 2,
-          repeats: false,
-          ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
-        },
-      });
-      console.log(`[Notification] ⚡ Acil bildirim: ${minutesLeft} dakika kaldı.`);
-    }
+    console.log(`[Notification] ✅ Zamanlandı: ${medicationName} @ ${triggerHour}:${String(triggerMinute).padStart(2, '0')}`);
 
     return identifierStr;
   } catch (err) {

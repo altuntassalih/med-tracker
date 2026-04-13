@@ -120,19 +120,25 @@ export default function HomeScreen() {
     let upcoming: any[] = [];
     let overdue: any[] = [];
     let completed: any[] = [];
+    // Dün overdue'ya eklenen ilaç+saat çiftlerini takip et (çifter önlemek için)
+    const addedToOverdue = new Set<string>();
 
     medications.forEach((med) => {
       // 1. DÜNÜ KONTROL ET (Dünden kalan içilmemiş ilaç var mı?)
+      // Önemli: ilaç dün veya daha önce başlamış olmalı (startDate <= yesterdayStr)
+      const medStartedBeforeToday = med.startDate <= yesterdayStr;
       let isForYesterday = false;
-      if (med.intervalDays && med.intervalDays > 1) {
-        const start = new Date(med.startDate).setHours(0,0,0,0);
-        const yesterdayDate = new Date();
-        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-        yesterdayDate.setHours(0,0,0,0);
-        const daysDiff = Math.floor((yesterdayDate.getTime() - start) / (1000 * 60 * 60 * 24));
-        if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForYesterday = true;
-      } else {
-        isForYesterday = true;
+      if (medStartedBeforeToday) {
+        if (med.intervalDays && med.intervalDays > 1) {
+          const start = new Date(med.startDate).setHours(0,0,0,0);
+          const yesterdayDate = new Date();
+          yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+          yesterdayDate.setHours(0,0,0,0);
+          const daysDiff = Math.floor((yesterdayDate.getTime() - start) / (1000 * 60 * 60 * 24));
+          if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForYesterday = true;
+        } else {
+          isForYesterday = true;
+        }
       }
 
       if (isForYesterday) {
@@ -146,6 +152,8 @@ export default function HomeScreen() {
 
           if (!isTakenYesterday) {
             // Dünden kalan ilaç -> Süresi geçti
+            const key = `${med.id}-${time}`;
+            addedToOverdue.add(key);
             overdue.push({ med, time, timeMinutes: 0, diff: -2000, label: t(language as LanguageCode, 'home.yesterday') || 'Dün' });
           }
         });
@@ -164,6 +172,9 @@ export default function HomeScreen() {
 
       if (isForToday) {
         (med.times || []).forEach((time) => {
+          // Dün overdue'ya eklenmiş aynı ilaç+saat çifti ise bugün atla (çifter olmasın)
+          if (addedToOverdue.has(`${med.id}-${time}`)) return;
+
           const isTakenToday = logs.some((l) => 
             l.medicationId === med.id && 
             l.expectedTime === time && 
