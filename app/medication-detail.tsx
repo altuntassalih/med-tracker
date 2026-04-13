@@ -7,7 +7,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { getMedicationInfo } from '../services/gemini';
 import { useStore } from '../store/useStore';
 import { updateMedication, clearMedicationLogs, addMedicationLog, updateMedicationLog, deleteMedicationLog, MedicationLog } from '../services/firestore';
-import { cancelMedicationNotifications, checkAndRefreshEndOfDayNotification } from '../services/notifications';
+import { cancelMedicationNotifications, checkAndRefreshEndOfDayNotification, rescheduleIntervalNotificationAfterTake, scheduleMedicationNotification, requestNotificationPermission } from '../services/notifications';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
 import { formatDate, getLocalDateString } from '../utils/date';
@@ -123,9 +123,62 @@ export default function MedicationDetailScreen() {
     return t(lang, `medicationOptions.types.${value}`);
   };
 
+  /** Periyodik ilaç alımında periyot güncelleme sorusu */
+  const askPeriodResetFromDetail = (med: any) => {
+    const intervalLabel = med.intervalDays === 2
+      ? (lang === 'tr' ? '2 günde bir' : 'every 2 days')
+      : med.intervalDays === 3
+        ? (lang === 'tr' ? '3 günde bir' : 'every 3 days')
+        : `${med.intervalDays}`;
+
+    const msgTr = `"${med.name}" için alım periyotunuz (${intervalLabel}) bugünle uyuşmuyor. Periyodu bugüne endekslemek ister misiniz?`;
+    const msgEn = `Your dosing period (${intervalLabel}) for "${med.name}" doesn't align with today. Would you like to reset the period to today?`;
+
+    showAlert({
+      message: lang === 'tr' ? msgTr : msgEn,
+      type: 'info',
+      buttons: [
+        { text: lang === 'tr' ? 'Hayır' : 'No', style: 'cancel' },
+        {
+          text: lang === 'tr' ? 'Evet, Güncelle' : 'Yes, Update',
+          onPress: async () => {
+            try {
+              const newStartDate = new Date().toISOString().split('T')[0];
+              await updateMedication(med.id, { startDate: newStartDate });
+              updateMedInStore(med.id, { startDate: newStartDate });
+              setMedication((prev: any) => prev ? { ...prev, startDate: newStartDate } : prev);
+
+              const hasPermission = await requestNotificationPermission();
+              if (hasPermission) {
+                await cancelMedicationNotifications(med.id);
+                for (const time of med.times) {
+                  await scheduleMedicationNotification(
+                    med.id, med.name, med.dosage, time,
+                    lang, med.intervalDays, newStartDate
+                  );
+                }
+              }
+
+              showAlert({
+                message: lang === 'tr' ? 'Periyot başarıyla güncellendi.' : 'Period updated successfully.',
+                type: 'success',
+              });
+            } catch (_err) {
+              showAlert({
+                message: lang === 'tr' ? 'Güncelleme başarısız.' : 'Update failed.',
+                type: 'danger',
+              });
+            }
+          },
+        },
+      ],
+    });
+  };
+
   const handleSlotPress = async (dateStr: string, time: string, currentStatus: string) => {
     if (!medication || !activeProfileId) return;
 
+    const todayStr = new Date().toISOString().split('T')[0];
     const existingLog = medicationLogs.find(
       l => l.medicationId === medication.id && 
            l.expectedTime === time && 
@@ -144,6 +197,29 @@ export default function MedicationDetailScreen() {
         };
         addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
         await addMedicationLog(logData);
+
+        // Periyodik ilaç kontrolü
+        const isIntervalDrug = medication.intervalDays && medication.intervalDays > 1 && medication.intervalDays !== 7;
+        if (isIntervalDrug) {
+          // Bildirim: alım sonrası sonraki tarihi zamanla
+          rescheduleIntervalNotificationAfterTake(
+            medication.id, medication.name, medication.dosage, time,
+            lang, medication.intervalDays, medication.startDate
+          );
+
+          // Periyot sorusu: Kullanıcı DÜN'ü (geçmiş geçerli günü) işaretlediyse sor
+          // Bugünü işaretlediyse sormaya gerek yok (zaten doğru gün)
+          const yesterdayStr = (() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 1);
+            d.setHours(0, 0, 0, 0);
+            return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+          })();
+          if (dateStr === yesterdayStr) {
+            setTimeout(() => askPeriodResetFromDetail(medication), 600);
+          }
+        }
+
       } else if (currentStatus === 'taken') {
         if (existingLog) {
           updateMedicationLogState(existingLog.id, { status: 'missed' });
@@ -156,7 +232,7 @@ export default function MedicationDetailScreen() {
         }
       }
       checkAndRefreshEndOfDayNotification(lang);
-    } catch (err) {
+    } catch (_err) {
       showAlert({ message: lang === 'tr' ? 'Güncelleme başarısız oldu.' : 'Update failed.', type: 'danger' });
     }
   };
@@ -255,6 +331,38 @@ export default function MedicationDetailScreen() {
           <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoDaily')} value={`${(medication.times || []).length}${t(lang, 'medicationDetail.timesPerDay')}`} icon="🔁" />
           {medication.endDate && <InfoRow styles={styles} label={t(lang, 'medicines.dateRange')} value={`${formatDate(medication.startDate)} - ${formatDate(medication.endDate)}`} icon="📅" />}
           {!medication.endDate && medication.startDate && <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoStart')} value={formatDate(medication.startDate)} icon="📅" />}
+        {/* Opsiyonel güç/seviye */}
+          {medication.strength
+            ? <InfoRow styles={styles} label={lang === 'tr' ? 'Güç / Seviye' : 'Strength'} value={medication.strength} icon="💡" />
+            : null
+          }
+
+          {/* Kalan adet ve bitiş tarihi */}
+          {medication.totalQuantity && (() => {
+            const dailyDose = (medication.times || []).length * parseFloat(medication.dosage || '1');
+            const daysPerCycle = medication.intervalDays || 1;
+            // Kaç günü karşılar?
+            const totalDays = Math.floor(medication.totalQuantity / dailyDose / daysPerCycle) * daysPerCycle;
+            const endDate = new Date(medication.startDate + 'T00:00:00');
+            endDate.setDate(endDate.getDate() + totalDays);
+            const endDateStr = endDate.toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { day: '2-digit', month: 'long', year: 'numeric' });
+
+            // Kalan adet
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const start = new Date(medication.startDate + 'T00:00:00');
+            const passedDays = Math.max(0, Math.floor((today.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+            const usedDoses = Math.floor(passedDays / daysPerCycle) * dailyDose;
+            const remaining = Math.max(0, medication.totalQuantity - usedDoses);
+
+            return (
+              <>
+                <InfoRow styles={styles} label={lang === 'tr' ? 'Kalan Adet' : 'Remaining'} value={`${remaining} ${lang === 'tr' ? 'adet' : 'units'}`} icon="📊" />
+                <InfoRow styles={styles} label={lang === 'tr' ? 'Tahmini Bitiş' : 'Est. End Date'} value={endDateStr} icon="🏁" />
+              </>
+            );
+          })()}
+
           {medication.notes ? <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoNotes')} value={medication.notes} icon="📝" /> : null}
         </View>
 

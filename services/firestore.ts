@@ -41,12 +41,16 @@ export interface Medication {
   type: string;
   dosage: string;
   unit: string;
-  times: string[]; 
+  times: string[];
   intervalDays?: number;
   notes?: string;
   startDate: string;
   endDate?: string;
   isActive: boolean;
+  // Opsiyonel: ilaç güç seviyesi (örn. "500mg", "20mcg")
+  strength?: string;
+  // Opsiyonel: toplam ilaç adedi (kalan hesabı için)
+  totalQuantity?: number;
   createdAt?: any;
 }
 

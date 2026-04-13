@@ -33,6 +33,10 @@ export interface Medication {
   startDate: string;
   endDate?: string;
   isActive: boolean;
+  // Opsiyonel: ilaç güç seviyesi (örn. "500mg", "20mcg")
+  strength?: string;
+  // Opsiyonel: toplam ilaç adedi (kalan hesabı için)
+  totalQuantity?: number;
 }
 
 export interface AlertConfig {

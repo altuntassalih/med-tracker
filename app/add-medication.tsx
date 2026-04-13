@@ -60,6 +60,7 @@ export default function AddMedicationScreen() {
   const isEditMode = !!existingMed && !templateId;
 
   const [name, setName] = useState(existingMed?.name || '');
+  const [strength, setStrength] = useState(existingMed?.strength || '');
   const [type, setType] = useState<string>(existingMed?.type || MEDICATION_TYPES[0].value);
   const [dosage, setDosage] = useState(existingMed?.dosage || '1');
   const [unit, setUnit] = useState<string>(existingMed?.unit || DOSE_UNITS[0]);
@@ -67,6 +68,9 @@ export default function AddMedicationScreen() {
   const [frequency, setFrequency] = useState(existingMed ? existingMed.times.length : 1);
   const [times, setTimes] = useState(existingMed?.times || ['08:00']);
   const [notes, setNotes] = useState(existingMed?.notes || '');
+  const [totalQuantity, setTotalQuantity] = useState(
+    existingMed?.totalQuantity ? String(existingMed.totalQuantity) : ''
+  );
   const [startDate, setStartDate] = useState(templateId ? getLocalDateString() : (existingMed?.startDate || getLocalDateString()));
   const [isSaving, setIsSaving] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
@@ -218,6 +222,7 @@ export default function AddMedicationScreen() {
     setActiveDuplicateError(null);
 
     setName(template.name);
+    setStrength(template.strength || '');
     setType(template.type);
     setDosage(template.dosage);
     setUnit(template.unit);
@@ -225,6 +230,7 @@ export default function AddMedicationScreen() {
     setFrequency(template.times.length);
     setTimes(template.times);
     setNotes(template.notes || '');
+    setTotalQuantity(template.totalQuantity ? String(template.totalQuantity) : '');
     setReuseTemplate(null);
     setSuggestions([]);
   };
@@ -279,8 +285,10 @@ export default function AddMedicationScreen() {
         intervalDays,
         times,
         notes: notes.trim(),
-        // Düzenleme modunda startDate bugünden ileriye taşınmaz ama
-        // "dün" kontrolü için startDate'i bugüne güncelliyoruz ki
+        // Opsiyonel alanlar
+        strength: strength.trim() || undefined,
+        totalQuantity: totalQuantity.trim() ? parseInt(totalQuantity.trim(), 10) : undefined,
+        // Düzenleme modunda startDate bugüne güncelliyoruz ki
         // değiştirilen saatler "Dün" olarak görünmesin
         startDate: isEditMode ? getLocalDateString() : startDate,
         profileId: existingMed ? existingMed.profileId : activeProfile.id,
@@ -400,6 +408,21 @@ export default function AddMedicationScreen() {
               ))}
             </View>
           )}
+        </View>
+
+        {/* Güç / Seviye --- Opsiyonel */}
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>
+            {lang === 'tr' ? 'Güç / Seviye (Opsiyonel)' : 'Strength (Optional)'}
+          </Text>
+          <TextInput
+            style={styles.input}
+            value={strength}
+            onChangeText={setStrength}
+            placeholder={lang === 'tr' ? 'Örn. 500mg, 20mcg, 10ml' : 'e.g. 500mg, 20mcg, 10ml'}
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+          />
         </View>
 
         <View style={styles.fieldGroup}>
@@ -634,6 +657,21 @@ export default function AddMedicationScreen() {
           </View>
         </View>
       </Modal>
+
+        {/* Toplam Adet --- Opsiyonel */}
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>
+            {lang === 'tr' ? 'Toplam Adet (Opsiyonel)' : 'Total Quantity (Optional)'}
+          </Text>
+          <TextInput
+            style={styles.input}
+            value={totalQuantity}
+            onChangeText={setTotalQuantity}
+            placeholder={lang === 'tr' ? 'Örn. 30, 60, 90 (tablet/kapsül sayısı)' : 'e.g. 30, 60, 90 (number of tablets)'}
+            placeholderTextColor={colors.textMuted}
+            keyboardType="numeric"
+          />
+        </View>
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>{t(lang, 'addMedication.notesLabel')}</Text>

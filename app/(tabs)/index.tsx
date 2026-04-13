@@ -7,12 +7,11 @@ import {
   TouchableOpacity,
   RefreshControl,
   Dimensions,
-  Image,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useStore } from '../../store/useStore';
-import { getMedications, Medication, addMedicationLog, MedicationLog } from '../../services/firestore';
-import { checkAndRefreshEndOfDayNotification } from '../../services/notifications';
+import { getMedications, Medication, addMedicationLog, MedicationLog, updateMedication } from '../../services/firestore';
+import { checkAndRefreshEndOfDayNotification, rescheduleIntervalNotificationAfterTake, scheduleMedicationNotification, cancelMedicationNotifications, requestNotificationPermission } from '../../services/notifications';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
 import { getLocalDateString } from '../../utils/date';
@@ -22,6 +21,8 @@ const { width } = Dimensions.get('window');
 // Eşik sabitleri
 const OVERDUE_THRESHOLD_MINUTES = 30;  // 30 dk gecikmeyi "süresi geçti" say
 const UPCOMING_WINDOW_MINUTES = 240;   // 240 dk içindekiler "yaklaşan"
+// Periyot güncelleme: Beklenen günden kaç gün sapma varsa sorulsun
+const PERIOD_SHIFT_TOLERANCE_DAYS = 0;
 
 function getTodayGreeting(lang: LanguageCode): string {
   const hour = new Date().getHours();
@@ -39,8 +40,15 @@ function getTodayDate(lang: LanguageCode): string {
   return `${day}.${month}.${year}`;
 }
 
+/** Periyodik ilaç için startDate'i bugüne endeksleyen yeni startDate hesaplar */
+function computeNewStartDateForPeriod(intervalDays: number): string {
+  // Bugünden geriye doğru, intervalDays'in tam katı olacak şekilde en yakın geçerli startDate
+  // En basit: bugünü yeni startDate yap (mod 0 = bugün geçerli alım günü)
+  return getLocalDateString();
+}
+
 export default function HomeScreen() {
-  const { user, profiles, activeProfileId, setActiveProfileId, medications: allMedications, medicationLogs, addMedicationLogState, language, theme } = useStore();
+  const { user, profiles, activeProfileId, setActiveProfileId, medications: allMedications, medicationLogs, addMedicationLogState, updateMedication: updateMedInStore, language, theme, showAlert } = useStore();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [tick, setTick] = useState(0); // Her dakika UI'ı tazeler
 
@@ -73,27 +81,95 @@ export default function HomeScreen() {
     onRefresh();
   }, [medicationLogs.length]);
 
+
+  /**
+
+   * Periyot güncelleme sorusunu sorar. Kullanıcı onaylarsa
+   * medication'ın startDate'ini bugüne endeksler ve bildirimleri yeniden zamanlar.
+   */
+  const askPeriodReset = (med: Medication) => {
+    const lang = language as LanguageCode;
+    const intervalLabel = med.intervalDays === 2
+      ? (lang === 'tr' ? '2 günde bir' : 'every 2 days')
+      : med.intervalDays === 3
+        ? (lang === 'tr' ? '3 günde bir' : 'every 3 days')
+        : `${med.intervalDays}`;
+
+    const msgTr = `"${med.name}" için alım periyotunuz (${intervalLabel}) bugünle uyuşmuyor. Periyodu bugüne endekslemek ister misiniz?`;
+    const msgEn = `Your dosing period (${intervalLabel}) for "${med.name}" doesn't align with today. Would you like to reset the period to today?`;
+
+    showAlert({
+      message: lang === 'tr' ? msgTr : msgEn,
+      type: 'info',
+      buttons: [
+        { text: lang === 'tr' ? 'Hayır' : 'No', style: 'cancel' },
+        {
+          text: lang === 'tr' ? 'Evet, Güncelle' : 'Yes, Update',
+          onPress: async () => {
+            try {
+              const newStartDate = computeNewStartDateForPeriod(med.intervalDays!);
+              await updateMedication(med.id, { startDate: newStartDate });
+              updateMedInStore(med.id, { startDate: newStartDate });
+
+              // Bildirimleri yeniden zamanla
+              const hasPermission = await requestNotificationPermission();
+              if (hasPermission) {
+                await cancelMedicationNotifications(med.id);
+                for (const time of med.times) {
+                  await scheduleMedicationNotification(
+                    med.id, med.name, med.dosage, time,
+                    lang, med.intervalDays!, newStartDate
+                  );
+                }
+              }
+
+              showAlert({
+                message: lang === 'tr' ? 'Periyot başarıyla güncellendi.' : 'Period updated successfully.',
+                type: 'success',
+              });
+            } catch (_err) {
+              showAlert({
+                message: lang === 'tr' ? 'Güncelleme başarısız.' : 'Update failed.',
+                type: 'danger',
+              });
+            }
+          },
+        },
+      ],
+    });
+  };
+
   const handleTakeMedication = async (medId: string, time: string, diff?: number) => {
     if (!activeProfile?.id) return;
     
+    const lang = language as LanguageCode;
+
+    // --- Hangi günün ilacı? ---
+    // diff === -2000: Özel marker "dünün ilacı" (overdue listesinden, label='Dün')
+    // diff < 0 ve timeMinutes > currentMinutes: saat ilerisi demek ama gece yarısını geçmiş → DÜN
+    // Diğer durumlar: BUGÜN
     let targetStr = todayStr;
-    
-    if (diff !== undefined) {
-      if (diff === -2000) {
-        // Özel marker: Bu bir dünün ilacıdır
+
+    if (diff === -2000) {
+      targetStr = yesterdayStr;
+    } else if (diff !== undefined && diff < 0) {
+      const [h, m] = time.split(':').map(Number);
+      const timeMinutes = h * 60 + m;
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+      // Saat gece yarısından sonra ve ilaç saati günün ilerisi (örn. 22:00)
+      // → Bu dünkü ilaçtır
+      if (timeMinutes > currentMinutes) {
         targetStr = yesterdayStr;
-      } else if (diff < 0) {
-        const [h, m] = time.split(':').map(Number);
-        const timeMinutes = h * 60 + m;
-        const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes();
-        
-        // Eğer geç kalan bir ilacı işaretliyorsak ve saati şu andan ilerideyse (gece yarısını geçmiştir), dünün ilacıdır
-        if (timeMinutes > currentMinutes) {
-          targetStr = yesterdayStr;
-        }
       }
     }
 
+    const med = medications.find(m => m.id === medId);
+    const intervalDays = med?.intervalDays;
+    const isIntervalDrug = intervalDays && intervalDays > 1 && intervalDays !== 7;
+
+    // --- Periyodik ilaç alım kaydı ---
     const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
       profileId: activeProfile.id,
       medicationId: medId,
@@ -102,11 +178,26 @@ export default function HomeScreen() {
       scheduledDate: targetStr,
       status: 'taken',
     };
-    
     addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
     await addMedicationLog(logData);
-    checkAndRefreshEndOfDayNotification(language as LanguageCode);
+
+    // Periyodik bildirim: alım sonrası sonraki tarihi zamanla
+    if (isIntervalDrug && med) {
+      rescheduleIntervalNotificationAfterTake(
+        med.id, med.name, med.dosage, time, lang, intervalDays, med.startDate
+      );
+    }
+
+    checkAndRefreshEndOfDayNotification(lang);
+
+    // --- Periyot güncelleme sorusu ---
+    // Senaryo: Dünkü (overdue "Dün") periyodik ilaç bugün alındı
+    // → "Periyodu bugüne endekslemek ister misiniz?" sor
+    if (isIntervalDrug && med && diff === -2000) {
+      setTimeout(() => askPeriodReset(med), 600);
+    }
   };
+
 
   const onRefresh = async () => {
     setIsRefreshing(true);
@@ -130,11 +221,11 @@ export default function HomeScreen() {
       let isForYesterday = false;
       if (medStartedBeforeToday) {
         if (med.intervalDays && med.intervalDays > 1) {
-          const start = new Date(med.startDate).setHours(0,0,0,0);
+          const start = new Date(med.startDate + 'T00:00:00');
           const yesterdayDate = new Date();
           yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-          yesterdayDate.setHours(0,0,0,0);
-          const daysDiff = Math.floor((yesterdayDate.getTime() - start) / (1000 * 60 * 60 * 24));
+          yesterdayDate.setHours(0, 0, 0, 0);
+          const daysDiff = Math.floor((yesterdayDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
           if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForYesterday = true;
         } else {
           isForYesterday = true;
@@ -162,9 +253,10 @@ export default function HomeScreen() {
       // 2. BUGÜNÜ KONTROL ET
       let isForToday = false;
       if (med.intervalDays && med.intervalDays > 1) {
-        const start = new Date(med.startDate).setHours(0,0,0,0);
-        const todayDate = new Date().setHours(0,0,0,0);
-        const daysDiff = Math.floor((todayDate - start) / (1000 * 60 * 60 * 24));
+        const start = new Date(med.startDate + 'T00:00:00');
+        const todayDate = new Date();
+        todayDate.setHours(0, 0, 0, 0);
+        const daysDiff = Math.floor((todayDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
         if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForToday = true;
       } else {
         isForToday = true;
@@ -402,7 +494,7 @@ export default function HomeScreen() {
                 </View>
                 <View style={styles.medInfo}>
                   <Text style={styles.medName}>{med.name}</Text>
-                  <Text style={styles.medDose}>{med.dosage} {med.unit}</Text>
+                  <Text style={styles.medDose}>{med.dosage} {med.unit}{med.strength ? ` · ${med.strength}` : ''}</Text>
                   <Text style={styles.medTimes}>{(med.times || []).join(' · ')}</Text>
                 </View>
                 <Text style={styles.medArrow}>›</Text>
