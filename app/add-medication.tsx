@@ -279,7 +279,10 @@ export default function AddMedicationScreen() {
         intervalDays,
         times,
         notes: notes.trim(),
-        startDate: startDate,
+        // Düzenleme modunda startDate bugünden ileriye taşınmaz ama
+        // "dün" kontrolü için startDate'i bugüne güncelliyoruz ki
+        // değiştirilen saatler "Dün" olarak görünmesin
+        startDate: isEditMode ? getLocalDateString() : startDate,
         profileId: existingMed ? existingMed.profileId : activeProfile.id,
         userId: user?.uid ?? 'guest',
         isActive: true,
