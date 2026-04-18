@@ -279,9 +279,6 @@ export default function HomeScreen() {
           const [h, m] = time.split(':').map(Number);
           const timeMinutes = h * 60 + m;
           let diff = timeMinutes - currentMinutes;
-          
-          if (diff < -720) diff += 1440;
-          else if (diff > 720) diff -= 1440;
 
           if (diff < -OVERDUE_THRESHOLD_MINUTES) {
             // OVERDUE_THRESHOLD_MINUTES dk geçtikten sonra -> Süresi Geçti

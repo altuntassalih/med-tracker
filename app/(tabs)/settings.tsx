@@ -187,18 +187,6 @@ export default function SettingsScreen() {
               }}
             />
             <Divider colors={colors} />
-            <TouchableOpacity
-              style={styles.settingRow}
-              onPress={async () => {
-                await scheduleTestNotification();
-                showAlert({ message: lang === 'tr' ? '✅ 5 saniye içinde test bildirimi gelecek!' : '✅ Test notification in 5 seconds!', type: 'success' });
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.settingIcon}>🧩</Text>
-              <Text style={styles.settingLabel}>{lang === 'tr' ? 'Bildirim Testi Gönder' : 'Send Test Notification'}</Text>
-              <Text style={{ fontSize: TYPOGRAPHY.fontSizeSm, color: colors.primary }}>→</Text>
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -220,7 +208,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t(lang, 'settings.appSection')}</Text>
           <View style={styles.card}>
-            <SettingRow colors={colors} icon="ℹ️" label={t(lang, 'settings.appVersion')} value="1.0.2" />
+            <SettingRow colors={colors} icon="ℹ️" label={t(lang, 'settings.appVersion')} value="1.0.3" />
             <Divider colors={colors} />
             <SettingRow 
               colors={colors} 
@@ -250,7 +238,7 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.versionBox}>
-          <Text style={styles.versionText}>MedTracker v1.0.2</Text>
+          <Text style={styles.versionText}>MedTracker v1.0.3</Text>
           <Text style={styles.versionSub}>{t(lang, 'settings.wish')}</Text>
         </View>
 
@@ -393,7 +381,7 @@ export default function SettingsScreen() {
                 <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
                   <Text style={styles.pickerIcon}>📋</Text>
                 </View>
-                <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{lang === 'tr' ? 'Yenilikler (v1.0.2)' : 'What\'s New (v1.0.2)'}</Text>
+                <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{lang === 'tr' ? 'Yenilikler (v1.0.3)' : 'What\'s New (v1.0.3)'}</Text>
               </View>
               <ScrollView style={styles.pickerBodyScroll} showsVerticalScrollIndicator={false}>
                 <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
