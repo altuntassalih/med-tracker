@@ -227,6 +227,11 @@ export default function MedicationDetailScreen() {
         }
       } else if (currentStatus === 'missed') {
         if (existingLog) {
+          updateMedicationLogState(existingLog.id, { status: 'postponed' });
+          await updateMedicationLog(existingLog.id, { status: 'postponed' });
+        }
+      } else if (currentStatus === 'postponed') {
+        if (existingLog) {
           deleteMedicationLogState(existingLog.id);
           await deleteMedicationLog(existingLog.id);
         }
@@ -241,7 +246,7 @@ export default function MedicationDetailScreen() {
   const buildDailyTracking = () => {
     if (!medication) return [];
     const medLogs = medicationLogs.filter((l) => l.medicationId === medication.id);
-    const days: { date: string; label: string; slots: { time: string; status: 'taken' | 'missed' | 'none' }[] }[] = [];
+    const days: { date: string; label: string; slots: { time: string; status: 'taken' | 'missed' | 'postponed' | 'none' }[] }[] = [];
 
     for (let i = 0; i < TRACKING_DAYS_COUNT; i++) {
       const d = new Date();
@@ -270,7 +275,7 @@ export default function MedicationDetailScreen() {
         );
         return {
           time,
-          status: log ? log.status : 'none' as 'taken' | 'missed' | 'none',
+          status: log ? log.status : 'none' as 'taken' | 'missed' | 'postponed' | 'none',
         };
       });
 
@@ -471,6 +476,10 @@ export default function MedicationDetailScreen() {
                 <Text style={[styles.legendLabel, { color: colors.textSecondary }]}>{t(lang, 'medicationDetail.statusMissed')}</Text>
               </View>
               <View style={styles.legendItem}>
+                <Text style={styles.legendIcon}>⏭️</Text>
+                <Text style={[styles.legendLabel, { color: colors.textSecondary }]}>{t(lang, 'medicationDetail.statusPostponed')}</Text>
+              </View>
+              <View style={styles.legendItem}>
                 <Text style={styles.legendIcon}>⬜</Text>
                 <Text style={[styles.legendLabel, { color: colors.textSecondary }]}>{t(lang, 'medicationDetail.statusNoRecord')}</Text>
               </View>
@@ -504,7 +513,7 @@ export default function MedicationDetailScreen() {
                         >
                           <Text style={styles.trackingSlotTime}>{slot.time}</Text>
                           <Text style={styles.trackingSlotIcon}>
-                            {slot.status === 'taken' ? '✅' : slot.status === 'missed' ? '❌' : '⬜'}
+                            {slot.status === 'taken' ? '✅' : slot.status === 'missed' ? '❌' : slot.status === 'postponed' ? '⏭️' : '⬜'}
                           </Text>
                         </TouchableOpacity>
                       ))}
@@ -639,7 +648,7 @@ const getStyles = (colors: any) => StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md,
   },
   modalTitle: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, flex: 1 },
-  legendRow: { flexDirection: 'row', gap: SPACING.lg, marginBottom: SPACING.md, paddingVertical: SPACING.sm },
+  legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.lg, marginBottom: SPACING.md, paddingVertical: SPACING.sm },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   legendIcon: { fontSize: 16 },
   legendLabel: { fontSize: TYPOGRAPHY.fontSizeXs },

@@ -67,6 +67,6 @@ Med-Tracker is a premium, AI-powered medication management application designed 
 ---
 
 ## 📦 Current Version
-**v1.0.2** - Optimized for performance and cross-user real-time sync.
+**v1.0.0** - Optimized for performance and cross-user real-time sync.
 
 **Author**: [altuntassalih](https://github.com/altuntassalih)

@@ -198,6 +198,61 @@ export default function HomeScreen() {
     }
   };
 
+  const handlePostpone = async (medId: string, time: string, diff?: number) => {
+    if (!activeProfile?.id) return;
+    const lang = language as LanguageCode;
+
+    let targetStr = todayStr;
+    if (diff === -2000) {
+      targetStr = yesterdayStr;
+    } else if (diff !== undefined && diff < 0) {
+      const [h, m] = time.split(':').map(Number);
+      const timeMinutes = h * 60 + m;
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      if (timeMinutes > currentMinutes) targetStr = yesterdayStr;
+    }
+
+    const med = medications.find(m => m.id === medId);
+    if (!med) return;
+
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = getLocalDateString(tomorrow);
+
+    const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
+      profileId: activeProfile.id,
+      medicationId: medId,
+      expectedTime: time,
+      takenAt: new Date().toISOString(),
+      scheduledDate: targetStr,
+      status: 'postponed',
+    };
+    addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
+    await addMedicationLog(logData);
+
+    await updateMedication(med.id, { startDate: tomorrowStr });
+    updateMedInStore(med.id, { startDate: tomorrowStr });
+
+    const hasPermission = await requestNotificationPermission();
+    if (hasPermission) {
+      await cancelMedicationNotifications(med.id);
+      for (const t of med.times) {
+        await scheduleMedicationNotification(
+          med.id, med.name, med.dosage, t,
+          lang, med.intervalDays || 1, tomorrowStr
+        );
+      }
+    }
+
+    checkAndRefreshEndOfDayNotification(lang);
+
+    showAlert({
+      message: t(lang, 'home.postponeSuccess'),
+      type: 'success',
+    });
+  };
+
 
   const onRefresh = async () => {
     setIsRefreshing(true);
@@ -238,7 +293,7 @@ export default function HomeScreen() {
             l.medicationId === med.id && 
             l.expectedTime === time && 
             (l.scheduledDate === yesterdayStr || (!l.scheduledDate && l.takenAt.startsWith(yesterdayStr))) &&
-            l.status === 'taken'
+            (l.status === 'taken' || l.status === 'postponed')
           );
 
           if (!isTakenYesterday) {
@@ -271,7 +326,7 @@ export default function HomeScreen() {
             l.medicationId === med.id && 
             l.expectedTime === time && 
             (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr))) &&
-            l.status === 'taken'
+            (l.status === 'taken' || l.status === 'postponed')
           );
 
           if (isTakenToday) return;
@@ -403,10 +458,16 @@ export default function HomeScreen() {
                       <Text style={styles.overdueAgo}>{timeAgoStr}</Text>
                     )}
                   </View>
-                  <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time, item.diff)}>
-                    <Text style={styles.takeBtnEmoji}>✓</Text>
-                    <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
-                  </TouchableOpacity>
+                  <View style={styles.actionButtons}>
+                    <TouchableOpacity style={styles.postponeBtn} onPress={() => handlePostpone(item.med.id, item.time, item.diff)}>
+                      <Text style={styles.postponeBtnEmoji}>⏭️</Text>
+                      <Text style={styles.postponeBtnText}>{t(language as LanguageCode, 'home.postponeBtn')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time, item.diff)}>
+                      <Text style={styles.takeBtnEmoji}>✓</Text>
+                      <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               );
             })}
@@ -438,10 +499,16 @@ export default function HomeScreen() {
                       {isPast ? t(language as LanguageCode, 'home.passed') : item.diff === 0 ? t(language as LanguageCode, 'home.now') : `${item.diff} ${t(language as LanguageCode, 'home.minsLater')}`}
                     </Text>
                   </View>
-                  <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time, item.diff)}>
-                    <Text style={styles.takeBtnEmoji}>✓</Text>
-                    <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
-                  </TouchableOpacity>
+                  <View style={styles.actionButtons}>
+                    <TouchableOpacity style={styles.postponeBtn} onPress={() => handlePostpone(item.med.id, item.time, item.diff)}>
+                      <Text style={styles.postponeBtnEmoji}>⏭️</Text>
+                      <Text style={styles.postponeBtnText}>{t(language as LanguageCode, 'home.postponeBtn')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time, item.diff)}>
+                      <Text style={styles.takeBtnEmoji}>✓</Text>
+                      <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               );
             })
@@ -635,11 +702,30 @@ const getStyles = (colors: any) => StyleSheet.create({
     paddingVertical: SPACING.sm,
     borderRadius: RADIUS.md,
     alignItems: 'center',
+    justifyContent: 'center',
     flexDirection: 'row',
     gap: 4,
   },
   takeBtnEmoji: { fontSize: 14, color: colors.success },
   takeBtnText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.success, fontWeight: TYPOGRAPHY.fontWeightBold },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+  },
+  postponeBtn: {
+    backgroundColor: colors.surfaceBorder + '44',
+    borderColor: colors.surfaceBorder,
+    borderWidth: 1,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 4,
+  },
+  postponeBtnEmoji: { fontSize: 12 },
+  postponeBtnText: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.textSecondary, fontWeight: TYPOGRAPHY.fontWeightMedium },
   completedCard: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
     backgroundColor: colors.surfaceElevated, opacity: 0.7, borderRadius: RADIUS.lg,

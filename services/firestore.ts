@@ -61,7 +61,7 @@ export interface MedicationLog {
   expectedTime: string;
   takenAt: string;
   scheduledDate?: string;
-  status: 'taken' | 'missed';
+  status: 'taken' | 'missed' | 'postponed';
   createdAt?: any;
 }
 

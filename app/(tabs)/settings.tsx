@@ -208,7 +208,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t(lang, 'settings.appSection')}</Text>
           <View style={styles.card}>
-            <SettingRow colors={colors} icon="ℹ️" label={t(lang, 'settings.appVersion')} value="1.0.3" />
+            <SettingRow colors={colors} icon="ℹ️" label={t(lang, 'settings.appVersion')} value="1.0.0" />
             <Divider colors={colors} />
             <SettingRow 
               colors={colors} 
@@ -238,7 +238,7 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.versionBox}>
-          <Text style={styles.versionText}>MedTracker v1.0.3</Text>
+          <Text style={styles.versionText}>MedTracker v1.0.0</Text>
           <Text style={styles.versionSub}>{t(lang, 'settings.wish')}</Text>
         </View>
 
@@ -381,7 +381,7 @@ export default function SettingsScreen() {
                 <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
                   <Text style={styles.pickerIcon}>📋</Text>
                 </View>
-                <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{lang === 'tr' ? 'Yenilikler (v1.0.3)' : 'What\'s New (v1.0.3)'}</Text>
+                <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{lang === 'tr' ? 'Yenilikler (v1.0.0)' : 'What\'s New (v1.0.0)'}</Text>
               </View>
               <ScrollView style={styles.pickerBodyScroll} showsVerticalScrollIndicator={false}>
                 <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
