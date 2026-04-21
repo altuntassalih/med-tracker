@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "sdkVersion": "54.0.0",
     "android": {
-      "package": "com.medtracker.app",
+      "package": "tr.com.salihaltuntas.medtracker",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
