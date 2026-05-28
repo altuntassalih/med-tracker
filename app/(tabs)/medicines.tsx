@@ -1,19 +1,20 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
+import { ScrollView, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useStore } from '../../store/useStore';
 import { deleteMedication } from '../../services/firestore';
 import { analyzeMedicationInteractions } from '../../services/gemini';
 import { cancelMedicationNotifications } from '../../services/notifications';
-import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
+import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, AI_FEATURES_ENABLED } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
 
 export default function MedicinesScreen() {
@@ -27,9 +28,12 @@ export default function MedicinesScreen() {
     showAlert
   } = useStore();
   
+  const insets = useSafeAreaInsets();
+  
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [selectedMeds, setSelectedMeds] = useState<string[]>([]);
+  const [showAiModal, setShowAiModal] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   
   const colors = getThemeColors(theme);
@@ -63,6 +67,17 @@ export default function MedicinesScreen() {
   };
 
   const handleAnalyze = async () => {
+    // If no medications are selected but we have a previous result, just open the modal!
+    if (selectedMeds.length === 0 && analysisResult) {
+      setShowAiModal(true);
+      return;
+    }
+
+    if (!AI_FEATURES_ENABLED) {
+      showAlert({ message: t(lang, 'medicines.aiQuotaMsg'), type: 'warning' });
+      return;
+    }
+
     const medsToAnalyze = selectedMeds.length > 0 
       ? medications.filter(m => selectedMeds.includes(m.id)) 
       : medications;
@@ -77,20 +92,19 @@ export default function MedicinesScreen() {
       return;
     }
     setIsAnalyzing(true);
-    setAnalysisResult(null);
     try {
       const medicationNames = medsToAnalyze.map((m) => `${m.name} ${m.dosage} ${getTranslatedUnit(m.unit)}`);
       const result = await analyzeMedicationInteractions(medicationNames, lang);
       setAnalysisResult(result);
-      setSelectedMeds([]); 
-      // Sonuç geldiğinde biraz bekle ve en alta kaydır
-      setTimeout(() => {
-        scrollRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+      setSelectedMeds([]);
+      setShowAiModal(true);
     } catch (err: any) {
-      const errMsg = lang === 'tr' 
-        ? `Hata detayı: ${err.message || 'Bilinmeyen hata'}\n\nEğer "High Demand" hatası alıyorsanız lütfen daha az ilaç seçerek tekrar deneyin.`
-        : `Error detail: ${err.message || 'Unknown error'}\n\nIf you get a "High Demand" error, please try again with fewer medications.`;
+      const isQuota = err?.isQuotaError || err?.message === 'QUOTA_EXCEEDED';
+      const errMsg = isQuota
+        ? t(lang, 'medicines.aiQuotaMsg')
+        : lang === 'tr'
+          ? `Analiz sırasında bir hata oluştu. Lütfen tekrar deneyin.`
+          : `An error occurred during analysis. Please try again.`;
       showAlert({ message: errMsg, type: 'danger' });
     } finally {
       setIsAnalyzing(false);
@@ -135,16 +149,16 @@ export default function MedicinesScreen() {
       <ScrollView 
         ref={scrollRef}
         style={styles.scroll} 
-        contentContainerStyle={styles.scrollContent} 
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
         <TouchableOpacity
           style={[
             styles.analyzeButton, 
-            (isAnalyzing || selectedMeds.length === 0) && styles.analyzeButtonDisabled
+            (isAnalyzing || (selectedMeds.length === 0 && !analysisResult)) && styles.analyzeButtonDisabled
           ]}
           onPress={handleAnalyze}
-          disabled={isAnalyzing || selectedMeds.length === 0}
+          disabled={isAnalyzing || (selectedMeds.length === 0 && !analysisResult)}
           activeOpacity={0.8}
         >
           {isAnalyzing ? (
@@ -154,27 +168,21 @@ export default function MedicinesScreen() {
           )}
           <View style={{ flex: 1 }}>
             <Text style={styles.analyzeButtonText}>
-              {selectedMeds.length > 0 ? t(lang, 'medicines.analyzeBtn') : t(lang, 'medicines.analyzeAll')}
+              {selectedMeds.length > 0 
+                ? t(lang, 'medicines.analyzeBtn') 
+                : analysisResult 
+                  ? (lang === 'tr' ? 'Son Analiz Sonucunu Göster' : 'Show Last Analysis Result')
+                  : t(lang, 'medicines.analyzeAll')}
             </Text>
             <Text style={styles.analyzeButtonSub}>
-              {selectedMeds.length > 0 ? t(lang, 'medicines.analyzeSubSelected') : t(lang, 'medicines.analyzeSubAll')}
+              {selectedMeds.length > 0 
+                ? t(lang, 'medicines.analyzeSubSelected') 
+                : analysisResult
+                  ? (lang === 'tr' ? 'Son yapılan yapay zeka analizini modalda açar' : 'Opens the last AI analysis in a modal')
+                  : t(lang, 'medicines.analyzeSubAll')}
             </Text>
           </View>
         </TouchableOpacity>
-
-        {analysisResult && (
-          <View style={styles.analysisResultCard}>
-            <View style={styles.analysisResultHeader}>
-              <Text style={styles.analysisResultTitle}>🤖 {t(lang, 'medicines.analysisResult')}</Text>
-              <TouchableOpacity onPress={() => setAnalysisResult(null)}>
-                <Text style={styles.closeBtn}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={true} nestedScrollEnabled={true}>
-              <Text style={styles.analysisResultText}>{analysisResult}</Text>
-            </ScrollView>
-          </View>
-        )}
 
         {medications.length === 0 ? (
           <View style={styles.emptyState}>
@@ -234,7 +242,7 @@ export default function MedicinesScreen() {
             </TouchableOpacity>
           ))
         )}
-
+ 
         <View style={{ height: SPACING.xxl * 3 }} />
       </ScrollView>
 
@@ -245,6 +253,47 @@ export default function MedicinesScreen() {
       >
         <Text style={styles.fabIcon}>+</Text>
       </TouchableOpacity>
+
+      {/* AI Yanıt Modal */}
+      <Modal
+        transparent
+        animationType="slide"
+        visible={showAiModal}
+        onRequestClose={() => setShowAiModal(false)}
+      >
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <View style={styles.aiModalOverlay}>
+            <View style={[styles.aiModalSheet, { paddingBottom: Math.max(insets.bottom, SPACING.xl) }]}>
+              <View style={styles.aiModalHeader}>
+                <Text style={styles.aiModalTitle}>🤖 {t(lang, 'medicines.analysisResult')}</Text>
+                <TouchableOpacity onPress={() => setShowAiModal(false)}>
+                  <Text style={styles.closeBtn}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView
+                style={styles.aiModalScroll}
+                showsVerticalScrollIndicator={true}
+                contentContainerStyle={{ paddingBottom: SPACING.lg }}
+              >
+                <Text style={styles.aiModalText}>{analysisResult}</Text>
+              </ScrollView>
+              <View style={styles.aiDisclaimer}>
+                <Text style={styles.aiDisclaimerText}>
+                  {t(lang, 'medicationDetail.aiDisclaimer')}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.aiModalCloseBtn}
+                onPress={() => setShowAiModal(false)}
+              >
+                <Text style={styles.aiModalCloseBtnText}>
+                  {lang === 'tr' ? 'Kapat' : 'Close'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </GestureHandlerRootView>
+      </Modal>
     </View>
   );
 }
@@ -265,7 +314,7 @@ const getStyles = (colors: any) => StyleSheet.create({
   archiveHeaderBtnText: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightSemiBold },
   profileName: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.primary, marginTop: 4 },
   scroll: { flex: 1 },
-  scrollContent: { padding: SPACING.xl },
+  scrollContent: { padding: SPACING.xl, paddingBottom: 150 },
   analyzeButton: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
     backgroundColor: colors.primary + '11', borderRadius: RADIUS.lg,
@@ -280,11 +329,41 @@ const getStyles = (colors: any) => StyleSheet.create({
     backgroundColor: colors.surface, borderRadius: RADIUS.lg,
     padding: SPACING.lg, marginBottom: SPACING.xl,
     borderWidth: 1, borderColor: colors.primary + '44',
+    gap: SPACING.md,
   },
-  analysisResultHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
+  analysisResultHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   analysisResultTitle: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
   closeBtn: { fontSize: TYPOGRAPHY.fontSizeLg, color: colors.textMuted },
-  analysisResultText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, lineHeight: 22 },
+  analysisPreviewText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, lineHeight: 22 },
+  readMoreBtn: {
+    backgroundColor: colors.primary + '22', borderRadius: RADIUS.md,
+    padding: SPACING.sm, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.primary + '44',
+  },
+  readMoreBtnText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightSemiBold },
+  aiDisclaimer: {
+    backgroundColor: colors.warning + '22', borderRadius: RADIUS.sm,
+    padding: SPACING.sm, borderWidth: 1, borderColor: colors.warning + '44',
+  },
+  aiDisclaimerText: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.warning },
+  // AI Modal
+  aiModalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end',
+  },
+  aiModalSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
+    height: '80%', padding: SPACING.xl, gap: SPACING.md,
+  },
+  aiModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  aiModalTitle: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
+  aiModalScroll: { flex: 1 },
+  aiModalText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, lineHeight: 24 },
+  aiModalCloseBtn: {
+    backgroundColor: colors.primary, borderRadius: RADIUS.lg,
+    padding: SPACING.md, alignItems: 'center',
+  },
+  aiModalCloseBtnText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: '#fff' },
   emptyState: { alignItems: 'center', paddingVertical: SPACING.huge, gap: SPACING.md },
   emptyEmoji: { fontSize: 56 },
   emptyTitle: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightSemiBold, color: colors.textPrimary },

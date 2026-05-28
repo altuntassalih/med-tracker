@@ -18,6 +18,11 @@ export default function GlobalAlert() {
   const { alert, hideAlert, theme } = useStore();
   const colors = getThemeColors(theme);
   
+  const isVertical = alert?.buttons && (
+    alert.buttons.length > 2 || 
+    alert.buttons.some(btn => btn.text.length > 15)
+  );
+
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
 
@@ -87,7 +92,7 @@ export default function GlobalAlert() {
             <Text style={[styles.message, { color: colors.textSecondary }]}>{alert.message}</Text>
           </View>
 
-          <View style={styles.buttonContainer}>
+          <View style={[styles.buttonContainer, isVertical && { flexDirection: 'column' }]}>
             {alert.buttons && alert.buttons.length > 0 ? (
               alert.buttons.map((btn, idx) => {
                 const isDestructive = btn.style === 'destructive';
@@ -99,7 +104,8 @@ export default function GlobalAlert() {
                     style={[
                       styles.button,
                       { borderTopColor: colors.surfaceBorder },
-                      idx > 0 && { borderLeftColor: colors.surfaceBorder, borderLeftWidth: 1 },
+                      !isVertical && idx > 0 && { borderLeftColor: colors.surfaceBorder, borderLeftWidth: 1 },
+                      isVertical && { flex: 0, width: '100%' },
                       isDestructive && { backgroundColor: colors.danger + '10' }
                     ]}
                     onPress={() => handleButtonPress(btn.onPress)}

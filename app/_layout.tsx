@@ -17,6 +17,7 @@ import { useStore } from '../store/useStore';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { getThemeColors } from '../constants/AppConstants';
 import GlobalAlert from '../components/GlobalAlert';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 const AUTH_TIMEOUT_MS = 3000;
 
@@ -33,10 +34,11 @@ function getTodayStr(): string {
 
 export default function RootLayout() {
   const {
-    setUser, setProfiles, setMedications, setMedicationLogs, setActiveProfileId,
+    user, setUser, setProfiles, setMedications, setMedicationLogs, setActiveProfileId,
     medications, medicationLogs, addMedicationLogState,
     theme, language, profiles,
     quietHoursStart, notificationsEnabled, autoMarkMissedAsTaken,
+    hasHydrated,
   } = useStore();
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -179,6 +181,51 @@ export default function RootLayout() {
     return () => subscription.remove();
   }, []);
 
+  // ---- 1. Firestore Senkronizasyon (Hydration sonrası ve Giriş Yapılmışsa) ----
+  useEffect(() => {
+    const syncData = async () => {
+      const state = useStore.getState();
+      if (!state.user?.uid || !hasHydrated) return;
+
+      // Eğer local store'da ilaç yoksa (ilk açılış veya temiz kurulum), Firestore'dan çek
+      if (state.medications.length === 0) {
+        setIsSyncing(true);
+        try {
+          const userProfiles = await getProfiles(state.user.uid);
+          if (userProfiles.length > 0) {
+            setProfiles(userProfiles);
+            setActiveProfileId(userProfiles[0].id);
+
+            let allMeds: any[] = [];
+            let allLogs: any[] = [];
+            for (const p of userProfiles) {
+              const meds = await getMedications(p.id, null);
+              allMeds = [...allMeds, ...meds];
+              const logs = await getMedicationLogs(p.id);
+              allLogs = [...allLogs, ...logs];
+            }
+            setMedications(allMeds);
+            setMedicationLogs(allLogs);
+          }
+        } catch (_syncErr) {
+        } finally {
+          setIsSyncing(false);
+        }
+      }
+    };
+    syncData();
+  }, [hasHydrated, user?.uid]);
+
+  // ---- 2. Bildirimleri ve Gün Sonu Kontrolünü Tetikleme ----
+  // İlaçlar veya ayarlar değiştiğinde bildirimleri güncelle
+  useEffect(() => {
+    if (isAuthReady && hasHydrated) {
+      rescheduleAllNotifications();
+      processMissedMedications();
+    }
+  }, [medications, notificationsEnabled, isAuthReady, hasHydrated]);
+
+  // ---- 3. Kullanıcı Oturum Takibi ----
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
 
@@ -197,37 +244,6 @@ export default function RootLayout() {
               displayName: firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Kullanıcı',
               photoURL: firebaseUser.photoURL ?? '',
             });
-
-            if (medications.length === 0) {
-              // İlk açılış veya temiz yükleme: Firestore'dan senkronize et
-              setIsSyncing(true);
-              try {
-                const userProfiles = await getProfiles(firebaseUser.uid);
-                if (userProfiles.length > 0) {
-                  setProfiles(userProfiles);
-                  setActiveProfileId(userProfiles[0].id);
-
-                  let allMeds: any[] = [];
-                  let allLogs: any[] = [];
-                  for (const p of userProfiles) {
-                    const meds = await getMedications(p.id, null);
-                    allMeds = [...allMeds, ...meds];
-                    const logs = await getMedicationLogs(p.id);
-                    allLogs = [...allLogs, ...logs];
-                  }
-                  setMedications(allMeds);
-                  setMedicationLogs(allLogs);
-                }
-              } catch (_syncErr) {
-              } finally {
-                setIsSyncing(false);
-              }
-            }
-
-            // Her açılışta bildirimleri yenile (restart sonrası dahil)
-            setTimeout(() => rescheduleAllNotifications(), 1000);
-            // Dün alınmayan ilaçları logla
-            setTimeout(() => processMissedMedications(), 1500);
           }
           setIsAuthReady(true);
         });
@@ -254,22 +270,24 @@ export default function RootLayout() {
   }
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-      <Stack screenOptions={{ 
-        headerShown: false, 
-        animation: 'fade',
-        contentStyle: { backgroundColor: colors.background }
-      }}>
-        <Stack.Screen name="login" />
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="add-medication" options={{ animation: 'slide_from_bottom' }} />
-        <Stack.Screen name="add-profile" options={{ animation: 'slide_from_bottom' }} />
-        <Stack.Screen name="medication-detail" options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen name="profile-settings" options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen name="archive" options={{ animation: 'slide_from_right' }} />
-      </Stack>
-      <GlobalAlert />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
+        <Stack screenOptions={{ 
+          headerShown: false, 
+          animation: 'fade',
+          contentStyle: { backgroundColor: colors.background }
+        }}>
+          <Stack.Screen name="login" />
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="add-medication" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="add-profile" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="medication-detail" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="profile-settings" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="archive" options={{ animation: 'slide_from_right' }} />
+        </Stack>
+        <GlobalAlert />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

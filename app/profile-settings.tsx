@@ -8,6 +8,7 @@ import { auth, db } from '../services/firebase';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, AVATAR_OPTIONS } from '../constants/AppConstants';
 import { t } from '../constants/translations';
 import type { LanguageCode } from '../constants/translations';
+import { calculateBmi } from '../utils/bmi';
 
 export default function ProfileSettingsScreen() {
   const { user, setUser, profiles, setProfiles, language, activeProfileId, theme } = useStore();
@@ -21,6 +22,10 @@ export default function ProfileSettingsScreen() {
   const { showAlert } = useStore();
   const [name, setName] = useState(activeProfile?.name || user?.displayName || '');
   const [avatar, setAvatar] = useState<string>(activeProfile?.avatar || '👤');
+  const [age, setAge] = useState(activeProfile?.age ? String(activeProfile.age) : '');
+  const [height, setHeight] = useState(activeProfile?.height ? String(activeProfile.height) : '');
+  const [weight, setWeight] = useState(activeProfile?.weight ? String(activeProfile.weight) : '');
+  const [targetWeight, setTargetWeight] = useState(activeProfile?.targetWeight ? String(activeProfile.targetWeight) : '');
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async () => {
@@ -41,7 +46,11 @@ export default function ProfileSettingsScreen() {
           await setDoc(doc(db, 'profiles', activeProfile.id), { 
             name: trimmedName,
             avatar: avatar,
-            userId: user?.uid
+            userId: user?.uid,
+            age: age ? parseInt(age, 10) : null,
+            height: height ? parseFloat(height) : null,
+            weight: weight ? parseFloat(weight) : null,
+            targetWeight: targetWeight ? parseFloat(targetWeight) : null,
           }, { merge: true });
         } catch (dbErr: any) {
           console.log('Firestore update failed, continuing with store update:', dbErr);
@@ -50,7 +59,15 @@ export default function ProfileSettingsScreen() {
       
       if (activeProfile) {
         const updatedProfiles = profiles.map(p =>
-          p.id === activeProfile.id ? { ...p, name: trimmedName, avatar: avatar } : p
+          p.id === activeProfile.id ? { 
+            ...p, 
+            name: trimmedName, 
+            avatar: avatar,
+            age: age ? parseInt(age, 10) : undefined,
+            height: height ? parseFloat(height) : undefined,
+            weight: weight ? parseFloat(weight) : undefined,
+            targetWeight: targetWeight ? parseFloat(targetWeight) : undefined,
+          } : p
         );
         setProfiles(updatedProfiles);
       }
@@ -137,9 +154,75 @@ export default function ProfileSettingsScreen() {
               placeholderTextColor={colors.textMuted}
               autoCapitalize="words"
               returnKeyType="done"
-              onSubmitEditing={handleSave}
             />
           </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>{lang === 'tr' ? 'Yaş (Opsiyonel)' : 'Age (Optional)'}</Text>
+            <TextInput
+              style={styles.input}
+              value={age}
+              onChangeText={(val) => setAge(val.replace(/[^0-9]/g, ''))}
+              placeholder={lang === 'tr' ? 'örn: 30' : 'e.g. 30'}
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              maxLength={3}
+            />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>{lang === 'tr' ? 'Boy (cm - Opsiyonel)' : 'Height (cm - Optional)'}</Text>
+            <TextInput
+              style={styles.input}
+              value={height}
+              onChangeText={(val) => setHeight(val.replace(/[^0-9]/g, ''))}
+              placeholder={lang === 'tr' ? 'örn: 175' : 'e.g. 175'}
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              maxLength={3}
+            />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>{lang === 'tr' ? 'Kilo (kg - Opsiyonel)' : 'Weight (kg - Optional)'}</Text>
+            <TextInput
+              style={styles.input}
+              value={weight}
+              onChangeText={(val) => setWeight(val.replace(/[^0-9.]/g, ''))}
+              placeholder={lang === 'tr' ? 'örn: 70' : 'e.g. 70'}
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              maxLength={5}
+            />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>{lang === 'tr' ? 'Hedef Kilo (kg - Opsiyonel)' : 'Target Weight (kg - Optional)'}</Text>
+            <TextInput
+              style={styles.input}
+              value={targetWeight}
+              onChangeText={(val) => setTargetWeight(val.replace(/[^0-9.]/g, ''))}
+              placeholder={lang === 'tr' ? 'örn: 65' : 'e.g. 65'}
+              placeholderTextColor={colors.textMuted}
+              keyboardType="numeric"
+              maxLength={5}
+            />
+          </View>
+
+          {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang) && (
+            <View style={[
+              styles.bmiBadge, 
+              { 
+                backgroundColor: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color + '15', 
+                borderColor: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color,
+                marginBottom: SPACING.xl
+              }
+            ]}>
+              <Text style={[styles.bmiText, { color: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color }]}>
+                📊 {lang === 'tr' ? 'Beden Kitle İndeksi (BKİ):' : 'Body Mass Index (BMI):'} {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.bmi} ({calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.category})
+              </Text>
+            </View>
+          )}
 
           <TouchableOpacity
             style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
@@ -221,5 +304,16 @@ const getStyles = (colors: any) => StyleSheet.create({
     fontSize: TYPOGRAPHY.fontSizeMd,
     color: colors.danger,
     fontWeight: TYPOGRAPHY.fontWeightBold,
+  },
+  bmiBadge: {
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    marginTop: SPACING.sm,
+    alignItems: 'center',
+  },
+  bmiText: {
+    fontSize: TYPOGRAPHY.fontSizeMd,
+    fontWeight: 'bold',
   },
 });

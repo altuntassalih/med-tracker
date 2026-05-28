@@ -87,6 +87,12 @@ export const RADIUS = {
   full: 9999,
 } as const;
 
+export const RECORD_TYPE_MEDICATION = 'medication';
+export const RECORD_TYPE_VACCINE = 'vaccine';
+export const DEFAULT_VACCINE_TIME = '09:00';
+export const DEFAULT_VACCINE_DOSAGE = '1';
+export const DEFAULT_VACCINE_UNIT = 'doz';
+
 // İlaç kategorileri
 export const MEDICATION_TYPES = [
   { label: 'Hap / Tablet', value: 'tablet', icon: '💊' },
@@ -119,7 +125,7 @@ export const INTERVAL_OPTIONS = [
 ] as const;
 
 // Gemini API
-export const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
+export const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent';
 
 // AsyncStorage anahtarları
 export const STORAGE_KEYS = {
@@ -136,3 +142,14 @@ export const AVATAR_OPTIONS = [
   '🐱', '🐶', '🐻', '🐼', '🦁', '🦄', '🍎', '🥦', '💧', '☀️',
   '🏠', '🚲', '🎮', '⭐️', '🍀', '🌈'
 ] as const;
+
+// Yapay Zeka Özelliği Kontrolü
+// false → butonlar pasif görünür, basılınca "limit doldu" mesajı gösterilir
+// true  → butonlar aktif, API çağrısı yapılır
+export const AI_FEATURES_ENABLED = true;
+
+// Barkod ve Stok Kriterleri
+export const MIN_BARCODE_LENGTH = 8;
+export const MAX_BARCODE_LENGTH = 15;
+export const STOCK_THRESHOLD_CRITICAL = 5;
+export const STOCK_THRESHOLD_WARNING = 10;

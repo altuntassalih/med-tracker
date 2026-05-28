@@ -1,14 +1,15 @@
-import { useState, useEffect } from 'react';
-import {
-  View, Text, StyleSheet, ScrollView,
+import { View, Text, StyleSheet,
   TouchableOpacity, ActivityIndicator, Modal,
 } from 'react-native';
+import { ScrollView, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useState, useEffect } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { getMedicationInfo } from '../services/gemini';
 import { useStore } from '../store/useStore';
 import { updateMedication, clearMedicationLogs, addMedicationLog, updateMedicationLog, deleteMedicationLog, MedicationLog } from '../services/firestore';
-import { cancelMedicationNotifications, checkAndRefreshEndOfDayNotification, rescheduleIntervalNotificationAfterTake, scheduleMedicationNotification, requestNotificationPermission } from '../services/notifications';
-import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../constants/AppConstants';
+import { cancelMedicationNotifications, checkAndRefreshEndOfDayNotification, rescheduleIntervalNotificationAfterTake, scheduleMedicationNotification, requestNotificationPermission, triggerCriticalStockNotification } from '../services/notifications';
+import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, AI_FEATURES_ENABLED, STOCK_THRESHOLD_CRITICAL, STOCK_THRESHOLD_WARNING } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
 import { formatDate, getLocalDateString } from '../utils/date';
 
@@ -17,6 +18,7 @@ const TRACKING_DAYS_COUNT = 30;
 
 export default function MedicationDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const insets = useSafeAreaInsets();
   const {
     activeProfileId,
     medications: allMedications,
@@ -32,6 +34,7 @@ export default function MedicationDetailScreen() {
   const [aiInfo, setAiInfo] = useState<string | null>(null);
   const [isLoadingInfo, setIsLoadingInfo] = useState(false);
   const [showTrackingModal, setShowTrackingModal] = useState(false);
+  const [showAiModal, setShowAiModal] = useState(false);
 
   const colors = getThemeColors(theme);
   const styles = getStyles(colors);
@@ -46,15 +49,30 @@ export default function MedicationDetailScreen() {
 
   const handleGetInfo = async () => {
     if (!medication) return;
+
+    if (aiInfo) {
+      setShowAiModal(true);
+      return;
+    }
+
+    // Yapay zeka devre dışıysa bilgilendir
+    if (!AI_FEATURES_ENABLED) {
+      showAlert({ message: t(lang, 'medicines.aiQuotaMsg'), type: 'warning' });
+      return;
+    }
+
     setIsLoadingInfo(true);
-    setAiInfo(null);
     try {
       const info = await getMedicationInfo(medication.name, lang);
       setAiInfo(info);
-    } catch (err) {
+      setShowAiModal(true);
+    } catch (err: any) {
+      const isQuota = err?.isQuotaError || err?.message === 'QUOTA_EXCEEDED';
       showAlert({ 
-        message: lang === 'tr' ? 'Bilgi alınamadı.' : 'Could not get info.',
-        type: 'danger'
+        message: isQuota
+          ? t(lang, 'medicines.aiQuotaMsg')
+          : lang === 'tr' ? 'Bilgi alınamadı.' : 'Could not get info.',
+        type: isQuota ? 'warning' : 'danger'
       });
     } finally {
       setIsLoadingInfo(false);
@@ -198,6 +216,22 @@ export default function MedicationDetailScreen() {
         addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
         await addMedicationLog(logData);
 
+        // Kritik stok uyarısı kontrolü
+        if (medication.totalQuantity !== undefined) {
+          const updatedState = useStore.getState();
+          const updatedLogs = updatedState.medicationLogs || [];
+          const takenCount = updatedLogs.filter((l: any) => l.medicationId === medication.id && l.status === 'taken').length;
+          const dosageVal = parseFloat(medication.dosage || '1');
+          const newRemaining = Math.max(0, medication.totalQuantity - (takenCount * dosageVal));
+          const oldRemaining = newRemaining + dosageVal;
+
+          if (newRemaining <= STOCK_THRESHOLD_CRITICAL && oldRemaining > STOCK_THRESHOLD_CRITICAL) {
+            triggerCriticalStockNotification(medication.name, STOCK_THRESHOLD_CRITICAL, lang);
+          } else if (newRemaining <= STOCK_THRESHOLD_WARNING && oldRemaining > STOCK_THRESHOLD_WARNING) {
+            triggerCriticalStockNotification(medication.name, STOCK_THRESHOLD_WARNING, lang);
+          }
+        }
+
         // Periyodik ilaç kontrolü
         const isIntervalDrug = medication.intervalDays && medication.intervalDays > 1 && medication.intervalDays !== 7;
         if (isIntervalDrug) {
@@ -254,7 +288,9 @@ export default function MedicationDetailScreen() {
       const dateStr = getLocalDateString(d);
 
       // Aralıklı ilaç kontrolü
-      if (medication.intervalDays && medication.intervalDays > 1) {
+      if (medication.type === 'vaccine') {
+        if (!medication.dates || !medication.dates.includes(dateStr)) continue;
+      } else if (medication.intervalDays && medication.intervalDays > 1) {
         const start = new Date(medication.startDate).setHours(0, 0, 0, 0);
         const dayTs = d.setHours(0, 0, 0, 0);
         const daysDiff = Math.floor((dayTs - start) / (1000 * 60 * 60 * 24));
@@ -285,6 +321,105 @@ export default function MedicationDetailScreen() {
     return days;
   };
 
+  // Son alınan tarih ve saat
+  const getLastTakenString = () => {
+    if (!medication) return '';
+    const logsForMed = medicationLogs.filter(
+      (l) => l.medicationId === medication.id && l.status === 'taken'
+    );
+    if (logsForMed.length === 0) {
+      return t(lang, 'medicationDetail.notTakenYet');
+    }
+    const sorted = [...logsForMed].sort(
+      (a, b) => new Date(b.takenAt).getTime() - new Date(a.takenAt).getTime()
+    );
+    const lastLog = sorted[0];
+    try {
+      const date = new Date(lastLog.takenAt);
+      const day = date.getDate().toString().padStart(2, '0');
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const year = date.getFullYear();
+      const hours = date.getHours().toString().padStart(2, '0');
+      const minutes = date.getMinutes().toString().padStart(2, '0');
+      return `${day}.${month}.${year} - ${hours}:${minutes}`;
+    } catch (_err) {
+      return t(lang, 'medicationDetail.notTakenYet');
+    }
+  };
+
+  // Bir sonraki ilaç alım tarihi ve saati
+  const getNextIntakeString = () => {
+    if (!medication) return '';
+    const now = new Date();
+    const medLogs = medicationLogs.filter((l) => l.medicationId === medication.id);
+
+    if (medication.type === 'vaccine') {
+      if (!medication.dates || medication.dates.length === 0) return t(lang, 'medicationDetail.none');
+      const sortedDates = [...medication.dates].sort();
+      for (const dateStr of sortedDates) {
+        const [y, mon, dVal] = dateStr.split('-').map(Number);
+        const [h, m] = (medication.times?.[0] || '09:00').split(':').map(Number);
+        const slotDate = new Date(y, mon - 1, dVal, h, m, 0, 0);
+
+        if (slotDate.getTime() > now.getTime()) {
+          const isLogged = medLogs.some((l) => 
+            l.expectedTime === (medication.times?.[0] || '09:00') && 
+            (l.scheduledDate === dateStr || (!l.scheduledDate && l.takenAt.startsWith(dateStr))) &&
+            (l.status === 'taken' || l.status === 'postponed')
+          );
+          if (!isLogged) {
+            const dayFormatted = slotDate.getDate().toString().padStart(2, '0');
+            const monthFormatted = (slotDate.getMonth() + 1).toString().padStart(2, '0');
+            const yearFormatted = slotDate.getFullYear();
+            return `${dayFormatted}.${monthFormatted}.${yearFormatted} - ${(medication.times?.[0] || '09:00')}`;
+          }
+        }
+      }
+      return t(lang, 'medicationDetail.none');
+    }
+
+    for (let i = 0; i < 30; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      const dateStr = getLocalDateString(d);
+
+      if (dateStr < medication.startDate) continue;
+      if (medication.endDate && dateStr > medication.endDate) break;
+
+      if (medication.intervalDays && medication.intervalDays > 1) {
+        const start = new Date(medication.startDate + 'T00:00:00');
+        const currentDay = new Date(dateStr + 'T00:00:00');
+        const diffTime = currentDay.getTime() - start.getTime();
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        if (diffDays < 0 || diffDays % medication.intervalDays !== 0) {
+          continue;
+        }
+      }
+
+      const sortedTimes = [...(medication.times || [])].sort();
+      for (const time of sortedTimes) {
+        const [h, m] = time.split(':').map(Number);
+        const slotDate = new Date(d);
+        slotDate.setHours(h, m, 0, 0);
+
+        if (slotDate.getTime() > now.getTime()) {
+          const isLogged = medLogs.some((l) => 
+            l.expectedTime === time && 
+            (l.scheduledDate === dateStr || (!l.scheduledDate && l.takenAt.startsWith(dateStr))) &&
+            (l.status === 'taken' || l.status === 'postponed')
+          );
+          if (!isLogged) {
+            const dayFormatted = slotDate.getDate().toString().padStart(2, '0');
+            const monthFormatted = (slotDate.getMonth() + 1).toString().padStart(2, '0');
+            const yearFormatted = slotDate.getFullYear();
+            return `${dayFormatted}.${monthFormatted}.${yearFormatted} - ${time}`;
+          }
+        }
+      }
+    }
+    return t(lang, 'medicationDetail.none');
+  };
+
   if (!medication) {
     return (
       <View style={styles.centered}>
@@ -300,65 +435,113 @@ export default function MedicationDetailScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backBtnText}>‹ {t(lang, 'medicationDetail.back')}</Text>
+          <Text style={styles.backBtnText}>← {t(lang, 'medicationDetail.back')}</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t(lang, 'medicationDetail.title')}</Text>
         <TouchableOpacity 
           onPress={() => router.push({ pathname: '/add-medication', params: { id: medication.id } })} 
-          style={{ width: 60, alignItems: 'flex-end' }}
+          style={styles.editHeaderBtn}
         >
-          <Text style={{ fontSize: TYPOGRAPHY.fontSizeMd, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightMedium }}>
-            {t(lang, 'medicationDetail.edit')}
+          <Text style={styles.editHeaderBtnText}>
+            ✏️ {t(lang, 'medicationDetail.edit')}
           </Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.medHeroCard}>
-          <Text style={styles.medHeroDate}>📅 {formatDate(medication.startDate)} {t(lang, 'addMedication.startDateLabel')}</Text>
-          <View style={styles.medHeroIcon}>
-            <Text style={styles.medHeroEmoji}>💊</Text>
-          </View>
-          <Text style={styles.medHeroName}>{medication.name}</Text>
-          <Text style={styles.medHeroDose}>{medication.dosage} {getTranslatedUnit(medication.unit)}</Text>
-
-          <View style={styles.timesRow}>
-            {(medication.times || []).map((time: string, i: number) => (
-              <View key={i} style={styles.timeTag}>
-                <Text style={styles.timeTagText}>🕐 {time}</Text>
+          <View style={styles.medHeroHeaderRow}>
+            <View style={styles.medHeroIcon}>
+              <Text style={styles.medHeroEmoji}>{medication.type === 'vaccine' ? '🛡️' : '💊'}</Text>
+            </View>
+            <View style={styles.medHeroInfo}>
+              <Text style={styles.medHeroName} numberOfLines={1}>{medication.name}</Text>
+              <View style={styles.medHeroSubRow}>
+                {medication.type !== 'vaccine' && (
+                  <Text style={styles.medHeroDose}>{medication.dosage} {getTranslatedUnit(medication.unit)}</Text>
+                )}
+                {medication.type !== 'vaccine' && medication.startDate && (
+                  <Text style={styles.medHeroDate}>📅 {formatDate(medication.startDate)}</Text>
+                )}
               </View>
-            ))}
+            </View>
           </View>
+
+          {medication.type !== 'vaccine' && medication.times && medication.times.length > 0 && (
+            <View style={styles.timesRow}>
+              {medication.times.map((time: string, i: number) => (
+                <View key={i} style={styles.timeTag}>
+                  <Text style={styles.timeTagText}>🕐 {time}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* AI Info inside Hero Card */}
+          <TouchableOpacity
+            style={[styles.compactAiBtn, isLoadingInfo && styles.infoButtonLoading]}
+            onPress={handleGetInfo}
+            disabled={isLoadingInfo}
+            activeOpacity={0.85}
+          >
+            {isLoadingInfo ? (
+              <>
+                <ActivityIndicator color="#fff" size="small" />
+                <Text style={styles.compactAiBtnText}>{t(lang, 'medicationDetail.aiAnalyzing')}</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.compactAiBtnIcon}>🤖</Text>
+                <Text style={styles.compactAiBtnText}>
+                  {aiInfo 
+                    ? (lang === 'tr' ? 'Yapay Zeka Analizini Gör' : 'Show AI Analysis')
+                    : t(lang, 'medicationDetail.aiButton')}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
 
         <View style={styles.infoCard}>
           <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoType')} value={getTranslatedTypeLabel(medication.type)} icon="📋" />
-          <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoDaily')} value={`${(medication.times || []).length}${t(lang, 'medicationDetail.timesPerDay')}`} icon="🔁" />
-          {medication.endDate && <InfoRow styles={styles} label={t(lang, 'medicines.dateRange')} value={`${formatDate(medication.startDate)} - ${formatDate(medication.endDate)}`} icon="📅" />}
-          {!medication.endDate && medication.startDate && <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoStart')} value={formatDate(medication.startDate)} icon="📅" />}
-        {/* Opsiyonel güç/seviye */}
-          {medication.strength
-            ? <InfoRow styles={styles} label={lang === 'tr' ? 'Güç / Seviye' : 'Strength'} value={medication.strength} icon="💡" />
-            : null
-          }
+          {medication.type !== 'vaccine' && (
+            <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoDaily')} value={`${(medication.times || []).length}${t(lang, 'medicationDetail.timesPerDay')}`} icon="🔁" />
+          )}
+          <InfoRow styles={styles} label={t(lang, 'medicationDetail.lastTaken')} value={getLastTakenString()} icon="⏱️" />
+          <InfoRow styles={styles} label={t(lang, 'medicationDetail.nextTake')} value={getNextIntakeString()} icon="⏰" />
+          {medication.type === 'vaccine' && medication.dates && (
+            <InfoRow 
+              styles={styles} 
+              label={lang === 'tr' ? 'Aşı Tarihleri' : 'Vaccine Dates'} 
+              value={medication.dates.map((d: string) => formatDate(d)).join(', ')} 
+              icon="📅" 
+            />
+          )}
+          {medication.type !== 'vaccine' && medication.endDate && <InfoRow styles={styles} label={t(lang, 'medicines.dateRange')} value={`${formatDate(medication.startDate)} - ${formatDate(medication.endDate)}`} icon="📅" />}
+          {medication.type !== 'vaccine' && !medication.endDate && medication.startDate && <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoStart')} value={formatDate(medication.startDate)} icon="📅" />}
+          
+          {medication.type !== 'vaccine' && medication.strength ? (
+            <InfoRow styles={styles} label={lang === 'tr' ? 'Güç / Seviye' : 'Strength'} value={medication.strength} icon="💡" />
+          ) : null}
 
           {/* Kalan adet ve bitiş tarihi */}
-          {medication.totalQuantity && (() => {
+          {medication.type !== 'vaccine' && medication.totalQuantity && (() => {
             const dailyDose = (medication.times || []).length * parseFloat(medication.dosage || '1');
             const daysPerCycle = medication.intervalDays || 1;
-            // Kaç günü karşılar?
-            const totalDays = Math.floor(medication.totalQuantity / dailyDose / daysPerCycle) * daysPerCycle;
-            const endDate = new Date(medication.startDate + 'T00:00:00');
-            endDate.setDate(endDate.getDate() + totalDays);
-            const endDateStr = endDate.toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { day: '2-digit', month: 'long', year: 'numeric' });
 
-            // Kalan adet
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const start = new Date(medication.startDate + 'T00:00:00');
-            const passedDays = Math.max(0, Math.floor((today.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
-            const usedDoses = Math.floor(passedDays / daysPerCycle) * dailyDose;
-            const remaining = Math.max(0, medication.totalQuantity - usedDoses);
+            // Kalan adet (Loglar üzerinden)
+            const takenCount = medicationLogs.filter((l: any) => l.medicationId === medication.id && l.status === 'taken').length;
+            const remaining = Math.max(0, medication.totalQuantity - (takenCount * parseFloat(medication.dosage || '1')));
+
+            // Tahmini Bitiş (Kalan adede göre bugünden itibaren)
+            const remainingDays = Math.floor(remaining / dailyDose) * daysPerCycle;
+            const estEndDate = new Date();
+            estEndDate.setDate(estEndDate.getDate() + remainingDays);
+            const endDateStr = estEndDate.toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { day: '2-digit', month: 'long', year: 'numeric' });
 
             return (
               <>
@@ -371,81 +554,78 @@ export default function MedicationDetailScreen() {
           {medication.notes ? <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoNotes')} value={medication.notes} icon="📝" /> : null}
         </View>
 
-        {medication.isActive && (
+        <View style={styles.actionRow}>
           <TouchableOpacity
-            style={styles.finishButton}
-            onPress={handleFinishMedication}
-            activeOpacity={0.8}
+            style={styles.compactTrackingBtn}
+            onPress={() => setShowTrackingModal(true)}
+            activeOpacity={0.85}
           >
-            <Text style={styles.finishButtonText}>🏁 {t(lang, 'medicines.finishMed')}</Text>
+            <Text style={styles.compactBtnText}>📊 {t(lang, 'medicationDetail.dailyTracking')}</Text>
           </TouchableOpacity>
-        )}
 
-        {/* Gün Bazlı Alım Takibi Butonu */}
-        <TouchableOpacity
-          style={styles.trackingButton}
-          onPress={() => setShowTrackingModal(true)}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.trackingButtonIcon}>📊</Text>
-          <View>
-            <Text style={styles.trackingButtonText}>{t(lang, 'medicationDetail.dailyTracking')}</Text>
-            <Text style={styles.trackingButtonSub}>{lang === 'tr' ? `Son ${TRACKING_DAYS_COUNT} gün` : `Last ${TRACKING_DAYS_COUNT} days`}</Text>
-          </View>
-        </TouchableOpacity>
+          {medication.isActive && (
+            <TouchableOpacity
+              style={styles.compactFinishBtn}
+              onPress={handleFinishMedication}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.compactFinishBtnText}>🏁 {t(lang, 'medicines.finishMed')}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* Geçmişi Temizle Butonu */}
         <TouchableOpacity
-          style={styles.clearHistoryButton}
+          style={styles.compactClearHistoryBtn}
           onPress={handleClearHistory}
           activeOpacity={0.8}
         >
-          <Text style={styles.clearHistoryText}>🗑️ {t(lang, 'medicationDetail.clearHistory')}</Text>
+          <Text style={styles.compactClearHistoryText}>🗑️ {t(lang, 'medicationDetail.clearHistory')}</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.infoButton, isLoadingInfo && styles.infoButtonLoading]}
-          onPress={handleGetInfo}
-          disabled={isLoadingInfo}
-          activeOpacity={0.85}
-        >
-          {isLoadingInfo ? (
-            <>
-              <ActivityIndicator color="#fff" size="small" />
-              <Text style={styles.infoButtonText}>{t(lang, 'medicationDetail.aiAnalyzing')}</Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.infoButtonIcon}>🤖</Text>
-              <View>
-                <Text style={styles.infoButtonText}>{t(lang, 'medicationDetail.aiButton')}</Text>
-                <Text style={styles.infoButtonSub}>{t(lang, 'medicationDetail.aiButtonSub')} {medication.name}</Text>
-              </View>
-            </>
-          )}
-        </TouchableOpacity>
-
-        {aiInfo && (
-          <View style={styles.aiResultCard}>
-            <View style={styles.aiResultHeader}>
-              <Text style={styles.aiResultTitle}>🤖 {t(lang, 'medicationDetail.aiTitle')}</Text>
-              <TouchableOpacity onPress={() => setAiInfo(null)}>
-                <Text style={styles.closeBtn}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={{ maxHeight: 200 }} showsVerticalScrollIndicator={true}>
-              <Text style={styles.aiResultText}>{aiInfo}</Text>
-            </ScrollView>
-            <View style={styles.aiDisclaimer}>
-              <Text style={styles.aiDisclaimerText}>
-                {t(lang, 'medicationDetail.aiDisclaimer')}
-              </Text>
-            </View>
-          </View>
-        )}
 
         <View style={{ height: SPACING.huge }} />
       </ScrollView>
+
+      {/* AI Yanıt Modal */}
+      <Modal
+        transparent
+        animationType="slide"
+        visible={showAiModal}
+        onRequestClose={() => setShowAiModal(false)}
+      >
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <View style={styles.aiModalOverlay}>
+            <View style={[styles.aiModalSheet, { paddingBottom: Math.max(insets.bottom, SPACING.xl) }]}>
+              <View style={styles.aiModalHeader}>
+                <Text style={styles.aiModalTitle}>🤖 {t(lang, 'medicationDetail.aiTitle')}</Text>
+                <TouchableOpacity onPress={() => setShowAiModal(false)}>
+                  <Text style={styles.closeBtn}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView
+                style={styles.aiModalScroll}
+                showsVerticalScrollIndicator={true}
+                contentContainerStyle={{ paddingBottom: SPACING.lg }}
+              >
+                <Text style={styles.aiModalText}>{aiInfo}</Text>
+              </ScrollView>
+              <View style={styles.aiDisclaimer}>
+                <Text style={styles.aiDisclaimerText}>
+                  {t(lang, 'medicationDetail.aiDisclaimer')}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.aiModalCloseBtn}
+                onPress={() => setShowAiModal(false)}
+              >
+                <Text style={styles.aiModalCloseBtnText}>
+                  {lang === 'tr' ? 'Kapat' : 'Close'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </GestureHandlerRootView>
+      </Modal>
 
       {/* Gün Bazlı Takip Modalı */}
       <Modal
@@ -553,53 +733,119 @@ const getStyles = (colors: any) => StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: SPACING.xl, paddingTop: 60, paddingBottom: SPACING.lg,
     borderBottomWidth: 1, borderBottomColor: colors.surfaceBorder,
+    position: 'relative',
   },
-  backBtn: { width: 60 },
-  backBtnText: { fontSize: TYPOGRAPHY.fontSizeLg, color: colors.primary },
-  headerTitle: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
+  backBtn: {
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    borderRadius: RADIUS.full,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backBtnText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  headerTitle: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: SPACING.lg,
+    textAlign: 'center',
+    zIndex: -1,
+    fontSize: TYPOGRAPHY.fontSizeLg,
+    fontWeight: TYPOGRAPHY.fontWeightBold,
+    color: colors.textPrimary,
+    paddingHorizontal: 85,
+  },
+  editHeaderBtn: {
+    backgroundColor: colors.primary + '18',
+    borderWidth: 1,
+    borderColor: colors.primary + '40',
+    borderRadius: RADIUS.full,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  editHeaderBtnText: {
+    fontSize: 13,
+    color: colors.primary,
+    fontWeight: 'bold',
+  },
   scroll: { flex: 1 },
-  scrollContent: { padding: SPACING.xl, gap: SPACING.lg },
+  scrollContent: { padding: SPACING.md, gap: SPACING.sm, paddingBottom: SPACING.xl },
   medHeroCard: {
-    backgroundColor: colors.surface, borderRadius: RADIUS.xl,
-    padding: SPACING.xxl, alignItems: 'center', gap: SPACING.md,
+    backgroundColor: colors.surface, borderRadius: RADIUS.lg,
+    padding: SPACING.md, gap: SPACING.sm,
     borderWidth: 1, borderColor: colors.surfaceBorder,
   },
+  medHeroHeaderRow: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
+  },
   medHeroIcon: {
-    width: 80, height: 80, borderRadius: RADIUS.xl,
+    width: 48, height: 48, borderRadius: RADIUS.md,
     backgroundColor: colors.primary + '22', alignItems: 'center', justifyContent: 'center',
   },
-  medHeroEmoji: { fontSize: 40 },
-  medHeroDate: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightMedium, marginBottom: -10 },
-  medHeroName: { fontSize: TYPOGRAPHY.fontSize2xl, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
-  medHeroDose: { fontSize: TYPOGRAPHY.fontSizeLg, color: colors.textSecondary },
-  timesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, justifyContent: 'center' },
+  medHeroEmoji: { fontSize: 24 },
+  medHeroInfo: { flex: 1, justifyContent: 'center' },
+  medHeroName: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
+  medHeroSubRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: SPACING.sm },
+  medHeroDate: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.textMuted },
+  medHeroDose: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.textSecondary, fontWeight: TYPOGRAPHY.fontWeightMedium },
+  timesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, justifyContent: 'flex-start' },
   timeTag: {
-    backgroundColor: colors.primary + '22', borderRadius: RADIUS.full,
-    paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs,
+    backgroundColor: colors.primary + '18', borderRadius: RADIUS.sm,
+    paddingHorizontal: 6, paddingVertical: 2,
   },
-  timeTagText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightMedium },
+  timeTagText: { fontSize: 11, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightMedium },
   infoCard: {
     backgroundColor: colors.surface, borderRadius: RADIUS.lg,
     borderWidth: 1, borderColor: colors.surfaceBorder, overflow: 'hidden',
   },
   infoRow: {
-    flexDirection: 'row', alignItems: 'center', padding: SPACING.lg, gap: SPACING.md,
+    flexDirection: 'row', alignItems: 'center', padding: SPACING.md, gap: SPACING.sm,
     borderBottomWidth: 1, borderBottomColor: colors.surfaceBorder,
   },
-  infoRowIcon: { fontSize: 18, width: 28 },
+  infoRowIcon: { fontSize: 16, width: 24 },
   infoRowLabel: { flex: 1, fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary },
   infoRowValue: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textPrimary, fontWeight: TYPOGRAPHY.fontWeightMedium },
-  infoButton: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
-    backgroundColor: colors.secondary, borderRadius: RADIUS.lg,
-    padding: SPACING.lg,
-    shadowColor: colors.secondary, shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35, shadowRadius: 12, elevation: 8,
+  compactAiBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm,
+    backgroundColor: colors.secondary, borderRadius: RADIUS.md,
+    paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md,
+    shadowColor: colors.secondary, shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15, shadowRadius: 4, elevation: 3,
   },
+  compactAiBtnIcon: { fontSize: 16 },
+  compactAiBtnText: { fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightBold, color: '#fff' },
+  actionRow: {
+    flexDirection: 'row', gap: SPACING.md, width: '100%',
+  },
+  compactTrackingBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.primary + '18', borderRadius: RADIUS.md,
+    padding: SPACING.md, borderWidth: 1, borderColor: colors.primary + '44',
+  },
+  compactFinishBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.danger + '22', borderRadius: RADIUS.md,
+    padding: SPACING.md, borderWidth: 1, borderColor: colors.danger + '44',
+  },
+  compactFinishBtnText: { fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.danger },
+  compactBtnText: { fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.primary },
+  compactClearHistoryBtn: {
+    backgroundColor: colors.danger + '11', borderRadius: RADIUS.md,
+    padding: SPACING.sm, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.danger + '22',
+  },
+  compactClearHistoryText: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.danger, fontWeight: TYPOGRAPHY.fontWeightMedium },
   infoButtonLoading: { opacity: 0.7 },
-  infoButtonIcon: { fontSize: 28 },
-  infoButtonText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: '#fff' },
-  infoButtonSub: { fontSize: TYPOGRAPHY.fontSizeXs, color: 'rgba(255,255,255,0.75)', marginTop: 2 },
   aiResultCard: {
     backgroundColor: colors.surface, borderRadius: RADIUS.lg,
     padding: SPACING.lg, borderWidth: 1, borderColor: colors.secondary + '44',
@@ -608,6 +854,31 @@ const getStyles = (colors: any) => StyleSheet.create({
   aiResultHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   aiResultTitle: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
   closeBtn: { fontSize: TYPOGRAPHY.fontSizeLg, color: colors.textMuted },
+  aiPreviewText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, lineHeight: 22 },
+  readMoreBtn: {
+    backgroundColor: colors.secondary + '22', borderRadius: RADIUS.md,
+    padding: SPACING.sm, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.secondary + '44',
+  },
+  readMoreBtnText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.secondary, fontWeight: TYPOGRAPHY.fontWeightSemiBold },
+  // AI Modal
+  aiModalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end',
+  },
+  aiModalSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
+    height: '80%', padding: SPACING.xl, gap: SPACING.md,
+  },
+  aiModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  aiModalTitle: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
+  aiModalScroll: { flex: 1 },
+  aiModalText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, lineHeight: 24 },
+  aiModalCloseBtn: {
+    backgroundColor: colors.secondary, borderRadius: RADIUS.lg,
+    padding: SPACING.md, alignItems: 'center',
+  },
+  aiModalCloseBtnText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: '#fff' },
   aiResultText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, lineHeight: 22 },
   aiDisclaimer: {
     backgroundColor: colors.warning + '22', borderRadius: RADIUS.sm,

@@ -15,6 +15,7 @@ import { deleteProfile } from '../../services/firestore';
 import { useStore } from '../../store/useStore';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
+import { calculateBmi } from '../../utils/bmi';
 
 export default function ProfilesScreen() {
   const { user, profiles, removeProfile, setActiveProfileId, activeProfileId, language, theme, showAlert } = useStore();
@@ -125,10 +126,51 @@ export default function ProfilesScreen() {
                 </View>
                 <View style={styles.profileInfo}>
                   <Text style={styles.profileName}>{profile.name}</Text>
-                  {profile.age && <Text style={styles.profileAge}>{profile.age} {t(lang, 'profiles.ageSuffix')}</Text>}
-                  {profile.isMain && (
-                    <View style={styles.mainBadge}>
-                      <Text style={styles.mainBadgeText}>{t(lang, 'profiles.mainBadge')}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, flexWrap: 'wrap' }}>
+                    {profile.age && <Text style={styles.profileAge}>{profile.age} {t(lang, 'profiles.ageSuffix')}</Text>}
+                    {profile.isMain && (
+                      <View style={styles.mainBadge}>
+                        <Text style={styles.mainBadgeText}>{t(lang, 'profiles.mainBadge')}</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Sağlık Bilgileri ve BKİ */}
+                  {(profile.height || profile.weight || profile.targetWeight) && (
+                    <View style={styles.healthStatsContainer}>
+                      <View style={styles.statsRow}>
+                        {profile.height && (
+                          <View style={styles.statItem}>
+                            <Text style={styles.statLabel}>{lang === 'tr' ? 'BOY' : 'HEIGHT'}</Text>
+                            <Text style={styles.statValue}>{profile.height} cm</Text>
+                          </View>
+                        )}
+                        {profile.weight && (
+                          <View style={styles.statItem}>
+                            <Text style={styles.statLabel}>{lang === 'tr' ? 'KİLO' : 'WEIGHT'}</Text>
+                            <Text style={styles.statValue}>{profile.weight} kg</Text>
+                          </View>
+                        )}
+                        {profile.targetWeight && (
+                          <View style={styles.statItem}>
+                            <Text style={styles.statLabel}>{lang === 'tr' ? 'HEDEF' : 'TARGET'}</Text>
+                            <Text style={[styles.statValue, { color: colors.primary }]}>{profile.targetWeight} kg</Text>
+                          </View>
+                        )}
+                      </View>
+                      {calculateBmi(profile.weight || 0, profile.height || 0, lang) && (
+                        <View style={[
+                          styles.bmiInfoBadge, 
+                          { 
+                            backgroundColor: calculateBmi(profile.weight || 0, profile.height || 0, lang)!.color + '15', 
+                            borderColor: calculateBmi(profile.weight || 0, profile.height || 0, lang)!.color + '33' 
+                          }
+                        ]}>
+                          <Text style={[styles.bmiInfoText, { color: calculateBmi(profile.weight || 0, profile.height || 0, lang)!.color }]}>
+                            ⚖️ BKİ: {calculateBmi(profile.weight || 0, profile.height || 0, lang)!.bmi} • {calculateBmi(profile.weight || 0, profile.height || 0, lang)!.category}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
@@ -227,6 +269,46 @@ const getStyles = (colors: any) => StyleSheet.create({
     marginTop: SPACING.md,
   },
   addProfileIcon: { fontSize: 32, color: colors.primary },
-  addProfileText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightSemiBold, color: colors.textPrimary },
+  addProfileText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
   addProfileSub: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary },
+  healthStatsContainer: {
+    marginTop: SPACING.sm,
+    paddingTop: SPACING.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.surfaceBorder,
+    gap: SPACING.xs,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: SPACING.md,
+    flexWrap: 'wrap',
+    marginTop: 2,
+  },
+  statItem: {
+    minWidth: 45,
+  },
+  statLabel: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+  },
+  statValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginTop: 1,
+  },
+  bmiInfoBadge: {
+    marginTop: SPACING.xs,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    borderRadius: RADIUS.sm,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  bmiInfoText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
 });

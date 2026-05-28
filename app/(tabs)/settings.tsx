@@ -97,9 +97,7 @@ export default function SettingsScreen() {
     setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
-  const handleOpenVersion = () => {
-    Linking.openURL('https://app.salihaltuntas.com.tr');
-  };
+
 
   return (
     <View style={styles.container}>
@@ -190,33 +188,14 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Yapay Zeka */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t(lang, 'settings.aiSection')}</Text>
-          <View style={styles.card}>
-            <SettingRow 
-              colors={colors}
-              icon="🤖" 
-              label={t(lang, 'settings.aiGemini')} 
-              value={t(lang, 'settings.aiConnected')} 
-              valueColor={colors.success} 
-            />
-          </View>
-        </View>
+
 
         {/* Uygulama Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t(lang, 'settings.appSection')}</Text>
           <View style={styles.card}>
             <SettingRow colors={colors} icon="ℹ️" label={t(lang, 'settings.appVersion')} value="1.0.0" />
-            <Divider colors={colors} />
-            <SettingRow 
-              colors={colors} 
-              icon="🚀" 
-              label={lang === 'tr' ? 'Güncel Versiyonu Kontrol Et' : 'Check for Updates'} 
-              isLink 
-              onPress={handleOpenVersion} 
-            />
+
             <Divider colors={colors} />
             <SettingRow colors={colors} icon="📝" label={lang === 'tr' ? 'Güncelleme Notları' : 'Changelog'} isLink onPress={() => setShowChangelogModal(true)} />
             <Divider colors={colors} />

@@ -190,6 +190,8 @@ export const scheduleMedicationNotification = async (
   try {
     await ensureAndroidChannel();
 
+    const med = state.medications.find(m => m.id === medicationId);
+
     const [originalHour, originalMinute] = time.split(':').map(Number);
 
     if (isNaN(originalHour) || isNaN(originalMinute)) {
@@ -227,16 +229,42 @@ export const scheduleMedicationNotification = async (
       return 'quiet_hours';
     }
 
+    const title = med?.type === 'vaccine'
+      ? (lang === 'tr' ? '🛡️ Aşı Zamanı!' : '🛡️ Vaccine Time!')
+      : (lang === 'tr' ? '💊 İlaç Zamanı!' : '💊 Medication Time!');
+      
+    const profile = med ? state.profiles.find(p => p.id === med.profileId) : null;
+    const profileName = profile ? profile.name : '';
+
+    // Aşı ise çoklu tarihleri tek seferlik DATE trigger'ları olarak planla
+    if (med?.type === 'vaccine') {
+      await cancelMedicationNotifications(medicationId);
+      const vaccineBody = lang === 'tr'
+        ? (profileName ? `${profileName} için ` : '') + `${medicationName} zamanı.`
+        : `Time for ${medicationName}` + (profileName ? ` for ${profileName}.` : '.');
+
+      if (med.dates && med.dates.length > 0) {
+        for (const dateStr of med.dates) {
+          const [y, mon, dVal] = dateStr.split('-').map(Number);
+          const targetDate = new Date(y, mon - 1, dVal, triggerHour, triggerMinute, 0, 0);
+          if (targetDate.getTime() > Date.now()) {
+            const dateIdentifier = `med-${medicationId}-${dateStr}-${time.replace(':', '')}`;
+            await scheduleOneTimeNotification(dateIdentifier, title, vaccineBody, targetDate, medicationId);
+          }
+        }
+      }
+      return 'vaccines_scheduled';
+    }
+
     // Bu ilacın bu vakti için BENZERSIZ identifier
     const identifierStr = `med-${medicationId}-${time.replace(':', '')}`;
 
     // Önce aynı kimlikli varsa iptal et
     try { await Notifications.cancelScheduledNotificationAsync(identifierStr); } catch (_e) {}
 
-    const title = lang === 'tr' ? '💊 İlaç Zamanı!' : '💊 Medication Time!';
     const body = lang === 'tr'
-      ? `${medicationName} (${dosage}) alma zamanı.`
-      : `Time to take ${medicationName} (${dosage}).`;
+      ? (profileName ? `${profileName} için ` : '') + `${medicationName} (${dosage}) alma zamanı.`
+      : `Time to take ${medicationName} (${dosage})` + (profileName ? ` for ${profileName}.` : '.');
 
     // --- intervalDays 2 veya 3: Tek seferlik DATE trigger ---
     if (intervalDays > 1 && intervalDays !== 7) {
@@ -315,9 +343,15 @@ export const rescheduleIntervalNotificationAfterTake = async (
 
   const identifierStr = `med-${medicationId}-${time.replace(':', '')}`;
   const title = lang === 'tr' ? '💊 İlaç Zamanı!' : '💊 Medication Time!';
+  const med = state.medications.find(m => m.id === medicationId);
+  if (med?.type === 'vaccine') return;
+
+  const profile = med ? state.profiles.find(p => p.id === med.profileId) : null;
+  const profileName = profile ? profile.name : '';
+
   const body = lang === 'tr'
-    ? `${medicationName} (${dosage}) alma zamanı.`
-    : `Time to take ${medicationName} (${dosage}).`;
+    ? (profileName ? `${profileName} için ` : '') + `${medicationName} (${dosage}) alma zamanı.`
+    : `Time to take ${medicationName} (${dosage})` + (profileName ? ` for ${profileName}.` : '.');
 
   // Alım yapıldığı gün (yani bugün), bir sonraki cycle'a git
   const todayMidnight = new Date();
@@ -423,7 +457,9 @@ export const checkAndRefreshEndOfDayNotification = async (lang: 'tr' | 'en' = 't
   const logs = (state.medicationLogs || []).filter(l => l.profileId === state.activeProfileId);
 
   medications.forEach((med) => {
-    if (med.intervalDays && med.intervalDays > 1) {
+    if (med.type === 'vaccine') {
+      if (!med.dates || !med.dates.includes(todayStr)) return;
+    } else if (med.intervalDays && med.intervalDays > 1) {
       const start = new Date(med.startDate).setHours(0, 0, 0, 0);
       const today = new Date().setHours(0, 0, 0, 0);
       const daysDiff = Math.floor((today - start) / (1000 * 60 * 60 * 24));
@@ -498,3 +534,40 @@ export const scheduleTestNotification = async (): Promise<void> => {
     });
   } catch (_err) { /* no-op */ }
 };
+
+export const triggerCriticalStockNotification = async (
+  medicationName: string,
+  remainingStock: number,
+  lang: 'tr' | 'en' = 'tr'
+): Promise<void> => {
+  if (!Notifications) return;
+
+  const state = useStore.getState();
+  if (!state.notificationsEnabled) return;
+
+  await ensureAndroidChannel();
+
+  const title = lang === 'tr' ? '⚠️ Kritik Stok Uyarısı!' : '⚠️ Critical Stock Warning!';
+  const body = lang === 'tr'
+    ? `"${medicationName}" ilacı için kalan stok ${remainingStock} adettir! Lütfen tedarik edin.`
+    : `Remaining stock for "${medicationName}" is ${remainingStock} units! Please refill.`;
+
+  try {
+    const timeIntervalType = SchedulableTriggerInputTypes?.TIME_INTERVAL ?? 'timeInterval';
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        sound: 'default',
+        priority: 'max',
+        data: { type: 'stock-warning', remainingStock },
+      },
+      trigger: {
+        type: timeIntervalType,
+        seconds: 1,
+        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
+      },
+    });
+  } catch (_err) { /* no-op */ }
+};
+

@@ -55,13 +55,14 @@ export const getMedicationSuggestions = async (name: string, lang: LanguageCode)
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.2,
-          maxOutputTokens: 100,
+          maxOutputTokens: 2000,
         },
       }),
     });
 
     const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    const text = parts.map((p: any) => p.text).join('');
     const results = text.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
     
     // Her bir yeni ismi küresel kütüphaneye async olarak ekle

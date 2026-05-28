@@ -1,19 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput,
   TouchableOpacity, Alert, ActivityIndicator, Modal, Platform,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useStore } from '../store/useStore';
-import { addMedication, updateMedication, getGlobalMedicationList, subscribeToGlobalMedications } from '../services/firestore';
+import { addMedication, updateMedication, getGlobalMedicationList, subscribeToGlobalMedications, getMedicationByBarcode, saveMedicationBarcode, addGlobalMedication } from '../services/firestore';
 import { requestNotificationPermission, scheduleMedicationNotification, cancelMedicationNotifications } from '../services/notifications';
 import {
   getThemeColors, TYPOGRAPHY, SPACING, RADIUS,
-  MEDICATION_TYPES, DOSE_UNITS, FREQUENCY_OPTIONS, INTERVAL_OPTIONS
+  MEDICATION_TYPES, DOSE_UNITS, FREQUENCY_OPTIONS, INTERVAL_OPTIONS,
+  RECORD_TYPE_MEDICATION, RECORD_TYPE_VACCINE, DEFAULT_VACCINE_TIME,
+  DEFAULT_VACCINE_DOSAGE, DEFAULT_VACCINE_UNIT, MIN_BARCODE_LENGTH,
+  MAX_BARCODE_LENGTH
 } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
 import { formatDate, getLocalDateString } from '../utils/date';
+import { identifyMedicationByBarcode } from '../services/gemini';
 import { getMedicationSuggestions } from '../services/suggest-service';
 
 const COMMON_MEDICATIONS = [
@@ -59,6 +64,14 @@ export default function AddMedicationScreen() {
                      templateId ? medications.find(m => m.id === templateId) : null;
   const isEditMode = !!existingMed && !templateId;
 
+  const [recordType, setRecordType] = useState<'medication' | 'vaccine'>(
+    existingMed?.type === RECORD_TYPE_VACCINE ? 'vaccine' : 'medication'
+  );
+  const [dates, setDates] = useState<string[]>(
+    existingMed?.dates || [getLocalDateString()]
+  );
+  const [activeDateIndex, setActiveDateIndex] = useState<number | null>(null);
+
   const [name, setName] = useState(existingMed?.name || '');
   const [strength, setStrength] = useState(existingMed?.strength || '');
   const [type, setType] = useState<string>(existingMed?.type || MEDICATION_TYPES[0].value);
@@ -79,7 +92,22 @@ export default function AddMedicationScreen() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [reuseTemplate, setReuseTemplate] = useState<any | null>(null);
   const [activeDuplicateError, setActiveDuplicateError] = useState<string | null>(null);
-  const [isSearchingAI, setIsSearchingAI] = useState(false);
+  const [barcode, setBarcode] = useState(existingMed?.barcode || '');
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false);
+  const [manualBarcode, setManualBarcode] = useState('');
+  const [isSearchingBarcode, setIsSearchingBarcode] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const [selectedPickerDate, setSelectedPickerDate] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // Modern Pure JS Picker State Variables for Android
   const [androidHour, setAndroidHour] = useState(8);
@@ -98,8 +126,44 @@ export default function AddMedicationScreen() {
   };
 
   const openStartDatePicker = () => {
+     setSelectedPickerDate(startDate);
      setAndroidMonthView(new Date(startDate || new Date()));
      setShowStartDatePicker(true);
+  };
+
+  const addDateSlot = () => {
+    const lastDate = dates[dates.length - 1] || getLocalDateString();
+    const today = getLocalDateString();
+    let nextDate = new Date(lastDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    let nextDateStr = nextDate.toISOString().split('T')[0];
+    if (nextDateStr < today) {
+      nextDateStr = today;
+    }
+    while (dates.includes(nextDateStr)) {
+      const temp = new Date(nextDateStr);
+      temp.setDate(temp.getDate() + 1);
+      nextDateStr = temp.toISOString().split('T')[0];
+    }
+    setDates([...dates, nextDateStr]);
+  };
+
+  const removeDateSlot = (index: number) => {
+    if (dates.length > 1) {
+      setDates(dates.filter((_, i) => i !== index));
+    } else {
+      showAlert({
+        message: t(lang, 'addMedication.errorVacDates'),
+        type: 'warning'
+      });
+    }
+  };
+
+  const openDatePickerForIndex = (index: number) => {
+    setActiveDateIndex(index);
+    setSelectedPickerDate(dates[index]);
+    setAndroidMonthView(new Date(dates[index] || new Date()));
+    setShowStartDatePicker(true);
   };
 
   useEffect(() => {
@@ -164,46 +228,156 @@ export default function AddMedicationScreen() {
     }
   };
 
-  const handleAISearch = async () => {
-    if (name.length < 3) {
-      showAlert({ 
-        message: lang === 'tr' ? 'Arama yapmak için en az 3 harf girin.' : 'Enter at least 3 letters to search.', 
-        type: 'warning' 
-      });
-      return;
+  const handleBarcodeLookup = async (code: string) => {
+    const trimmedCode = code.trim();
+    if (!trimmedCode) return;
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
     }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
-    // Zaten sistemde varsa (Yerel veya Küresel) yapay zekayı kullanma
-    const isKnown = [...COMMON_MEDICATIONS, ...(globalMedications || [])].some(
-      m => m.toLowerCase() === name.trim().toLowerCase()
-    );
+    setIsSearchingBarcode(true);
+    try {
+      // 1. Önce lokal/global Firestore veritabanımızdan kontrol et
+      const cachedMed = await getMedicationByBarcode(trimmedCode, user?.uid || 'guest');
+      if (controller.signal.aborted) return;
 
-    if (isKnown) {
-        showAlert({ 
-          message: lang === 'tr' ? 'Bu ilaç zaten sistemimizde kayıtlı.' : 'This medication is already in our system.', 
-          type: 'info' 
+      if (cachedMed) {
+        setIsSearchingBarcode(false);
+
+        const confirmMsgTr = `Sistemde Bulunan İlaç:\n💊 ${cachedMed.name} ${cachedMed.strength ? `(${cachedMed.strength})` : ''}\n\nAradığınız ilaç bu mu?`;
+        const confirmMsgEn = `Medication Found in System:\n💊 ${cachedMed.name} ${cachedMed.strength ? `(${cachedMed.strength})` : ''}\n\nIs this the medicine you are looking for?`;
+
+        showAlert({
+          message: lang === 'tr' ? confirmMsgTr : confirmMsgEn,
+          type: 'info',
+          buttons: [
+            {
+              text: lang === 'tr' ? 'Hayır' : 'No',
+              style: 'cancel',
+              onPress: () => {
+                setScanned(false);
+                setManualBarcode('');
+              }
+            },
+            {
+              text: lang === 'tr' ? 'Evet, Doldur' : 'Yes, Populate',
+              onPress: () => {
+                setBarcode(trimmedCode);
+                setName(cachedMed.name);
+                setType(cachedMed.type || MEDICATION_TYPES[0].value);
+                setDosage(cachedMed.dosage || '1');
+                setUnit(cachedMed.unit || DOSE_UNITS[0]);
+                setStrength(cachedMed.strength || '');
+                // Notlar alanına herhangi bir veri eklemiyoruz
+                setShowBarcodeModal(false);
+              }
+            }
+          ]
         });
         return;
-    }
+      }
 
-    setIsSearchingAI(true);
-    try {
-      const results = await getMedicationSuggestions(name, lang);
-      if (results.length > 0) {
-        setSuggestions(results);
-        // Yerel store'u anında güncelle ki arama sonuçları hemen öneri olarak gelsin
-        const updatedGlobalMeds = Array.from(new Set([...(globalMedications || []), ...results]));
-        setGlobalMedications(updatedGlobalMeds);
+      // 2. Veritabanında yoksa, Gemini API'ye sor
+      const result = await identifyMedicationByBarcode(trimmedCode, lang, controller.signal);
+      if (controller.signal.aborted) return;
+
+      if (result.isMedication && result.name) {
+        setIsSearchingBarcode(false);
+
+        const confirmMsgTr = `Doğrulanan İlaç:\n💊 ${result.name} ${result.strength ? `(${result.strength})` : ''}\n\nAradığınız ilaç bu mu?`;
+        const confirmMsgEn = `Verified Medication:\n💊 ${result.name} ${result.strength ? `(${result.strength})` : ''}\n\nIs this the medicine you are looking for?`;
+
+        showAlert({
+          message: lang === 'tr' ? confirmMsgTr : confirmMsgEn,
+          type: 'info',
+          buttons: [
+            {
+              text: lang === 'tr' ? 'Hayır' : 'No',
+              style: 'cancel',
+              onPress: () => {
+                setScanned(false);
+                setManualBarcode('');
+              }
+            },
+            {
+              text: lang === 'tr' ? 'Evet, Doldur' : 'Yes, Populate',
+              onPress: async () => {
+                const finalName = result.name || '';
+                setBarcode(trimmedCode);
+                setName(finalName);
+                if (result.type) setType(result.type);
+                if (result.dosage) setDosage(result.dosage);
+                if (result.unit) setUnit(result.unit);
+                if (result.strength) setStrength(result.strength);
+                // Notlar alanına herhangi bir veri eklemiyoruz
+
+                // Sisteme kaydet (Veritabanımıza ekle)
+                await saveMedicationBarcode(user?.uid || 'guest', {
+                  barcode: trimmedCode,
+                  name: finalName,
+                  type: result.type || type,
+                  dosage: result.dosage || dosage,
+                  unit: result.unit || unit,
+                  strength: result.strength || '',
+                  notes: result.notes || '',
+                });
+
+                // Global ilaç listesine de ekle
+                await addGlobalMedication(finalName);
+
+                setShowBarcodeModal(false);
+              }
+            }
+          ]
+        });
       } else {
-        showAlert({ 
-          message: lang === 'tr' ? 'Sonuç bulunamadı.' : 'No results found.', 
-          type: 'info' 
+        // İlaç bulunamadı/doğrulanamadı
+        showAlert({
+          message: lang === 'tr' 
+            ? 'Bu barkod geçerli bir ilaca ait görünmüyor. Barkodu kontrol edip tekrar deneyebilir veya manuel giriş yapabilirsiniz.' 
+            : 'This barcode does not seem to belong to a valid medication. You can check the barcode or enter details manually.',
+          type: 'warning',
+          buttons: [
+            {
+              text: lang === 'tr' ? 'Tamam' : 'OK',
+              onPress: () => {
+                setScanned(false);
+                setManualBarcode('');
+              }
+            }
+          ]
         });
       }
     } catch (err: any) {
-      showAlert({ message: err.message || 'AI Hatası', type: 'danger' });
+      if (err.name === 'AbortError') return;
+      
+      const isQuota = err.isQuotaError || err.message?.toLowerCase().includes('quota') || err.message?.toLowerCase().includes('exceeded');
+      const errorMsg = isQuota
+        ? (lang === 'tr' 
+            ? 'Yapay zeka günlük sorgulama limitine ulaşıldı. Lütfen barkod bilgilerini manuel olarak doldurun.' 
+            : 'AI daily query limit exceeded. Please populate medication details manually.')
+        : (lang === 'tr' ? 'Barkod sorgulanırken hata oluştu.' : 'Error querying barcode.');
+
+      showAlert({
+        message: errorMsg,
+        type: 'danger',
+        buttons: [
+          {
+            text: lang === 'tr' ? 'Tamam' : 'OK',
+            onPress: () => {
+              setScanned(false);
+              setManualBarcode('');
+            }
+          }
+        ]
+      });
     } finally {
-      setIsSearchingAI(false);
+      if (!controller.signal.aborted) {
+        setIsSearchingBarcode(false);
+      }
     }
   };
 
@@ -255,7 +429,11 @@ export default function AddMedicationScreen() {
 
   const handleSave = async () => {
     if (!name.trim()) { showAlert({ message: t(lang, 'addMedication.errorName'), type: 'danger' }); return; }
-    if (!dosage.trim()) { showAlert({ message: t(lang, 'addMedication.errorDose'), type: 'danger' }); return; }
+    if (recordType === 'medication') {
+      if (!dosage.trim()) { showAlert({ message: t(lang, 'addMedication.errorDose'), type: 'danger' }); return; }
+    } else {
+      if (dates.length === 0) { showAlert({ message: t(lang, 'addMedication.errorVacDates'), type: 'danger' }); return; }
+    }
     if (!isEditMode && !activeProfile?.id) { showAlert({ message: t(lang, 'addMedication.errorProfile'), type: 'danger' }); return; }
 
     setIsSaving(true);
@@ -279,22 +457,38 @@ export default function AddMedicationScreen() {
 
       const medData = {
         name: name.trim(),
-        type,
-        dosage: dosage.trim(),
-        unit,
-        intervalDays,
-        times,
+        type: recordType === 'vaccine' ? RECORD_TYPE_VACCINE : type,
+        dosage: recordType === 'vaccine' ? DEFAULT_VACCINE_DOSAGE : dosage.trim(),
+        unit: recordType === 'vaccine' ? DEFAULT_VACCINE_UNIT : unit,
+        intervalDays: recordType === 'vaccine' ? 0 : intervalDays,
+        times: recordType === 'vaccine' ? [DEFAULT_VACCINE_TIME] : times,
         notes: notes.trim(),
+        dates: recordType === 'vaccine' ? dates : undefined,
         // Opsiyonel alanlar
-        strength: strength.trim() || undefined,
-        totalQuantity: totalQuantity.trim() ? parseInt(totalQuantity.trim(), 10) : undefined,
+        strength: recordType === 'medication' && strength.trim() ? strength.trim() : undefined,
+        totalQuantity: recordType === 'medication' && totalQuantity.trim() ? parseInt(totalQuantity.trim(), 10) : undefined,
+        barcode: recordType === 'medication' && barcode.trim() ? barcode.trim() : undefined,
         // Düzenleme modunda startDate bugüne güncelliyoruz ki
         // değiştirilen saatler "Dün" olarak görünmesin
-        startDate: isEditMode ? getLocalDateString() : startDate,
+        startDate: recordType === 'vaccine' ? dates[0] : (isEditMode ? getLocalDateString() : startDate),
         profileId: existingMed ? existingMed.profileId : activeProfile.id,
         userId: user?.uid ?? 'guest',
         isActive: true,
       };
+
+      // Barkod girilmişse ve ilaç türü aşı değilse, global barkod veritabanına da kaydet
+      if (recordType === 'medication' && barcode.trim() && name.trim()) {
+        await saveMedicationBarcode(user?.uid || 'guest', {
+          barcode: barcode.trim(),
+          name: name.trim(),
+          type: type,
+          dosage: medData.dosage,
+          unit: unit,
+          strength: strength.trim() || undefined,
+          notes: notes.trim() || undefined,
+        });
+        await addGlobalMedication(name.trim());
+      }
 
       if (isEditMode && existingMed) {
         await updateMedication(existingMed.id, medData);
@@ -303,8 +497,8 @@ export default function AddMedicationScreen() {
         await cancelMedicationNotifications(existingMed.id);
         const hasPermission = await requestNotificationPermission();
         if (hasPermission) {
-          for (const time of times) {
-            await scheduleMedicationNotification(existingMed.id, medData.name, medData.dosage, time, lang, medData.intervalDays, medData.startDate);
+          for (const tVal of medData.times) {
+            await scheduleMedicationNotification(existingMed.id, medData.name, medData.dosage, tVal, lang, medData.intervalDays, medData.startDate);
           }
         }
       } else {
@@ -313,8 +507,8 @@ export default function AddMedicationScreen() {
         
         const hasPermission = await requestNotificationPermission();
         if (hasPermission) {
-          for (const time of times) {
-            await scheduleMedicationNotification(newMed.id, medData.name, medData.dosage, time, lang, medData.intervalDays, medData.startDate);
+          for (const tVal of medData.times) {
+            await scheduleMedicationNotification(newMed.id, medData.name, medData.dosage, tVal, lang, medData.intervalDays, medData.startDate);
           }
         }
       }
@@ -324,7 +518,7 @@ export default function AddMedicationScreen() {
         type: 'success',
         buttons: [{ text: t(lang, 'addMedication.confirmBtn'), onPress: () => router.back() }]
       });
-    } catch (err) {
+    } catch (_err) {
       showAlert({ message: lang === 'tr' ? 'İşlem başarısız oldu' : 'Action failed', type: 'danger' });
     } finally {
       setIsSaving(false);
@@ -349,42 +543,60 @@ export default function AddMedicationScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backBtnText}>‹ {t(lang, 'addMedication.back')}</Text>
+          <Text style={styles.backBtnText}>← {t(lang, 'addMedication.back')}</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{isEditMode ? t(lang, 'addMedication.editTitle') : t(lang, 'addMedication.addTitle')}</Text>
         <View style={{ width: 60 }} />
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled={true}
+      >
         {activeProfile && (
           <View style={styles.profileIndicator}>
             <Text style={styles.profileIndicatorText}>{activeProfile.avatar || '👤'} {activeProfile.name} {t(lang, 'addMedication.profileIndicator')}</Text>
           </View>
         )}
 
+        {/* İlaç / Aşı Seçimi */}
         <View style={styles.fieldGroup}>
-          <Text style={styles.label}>{t(lang, 'addMedication.nameLabel')}</Text>
-          <View style={styles.inputSearchRow}>
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              value={name}
-              onChangeText={handleNameChange}
-              placeholder={t(lang, 'addMedication.namePlaceholder')}
-              placeholderTextColor={colors.textMuted}
-            />
-            <TouchableOpacity 
-              style={[styles.aiSearchBtn, isSearchingAI && styles.aiSearchBtnDisabled]} 
-              onPress={handleAISearch}
-              disabled={isSearchingAI}
-              activeOpacity={0.7}
+          <Text style={styles.label}>{t(lang, 'addMedication.recordType')}</Text>
+          <View style={styles.segmentContainer}>
+            <TouchableOpacity
+              style={[styles.segmentButton, recordType === 'medication' && styles.segmentActiveButton]}
+              onPress={() => !isEditMode && setRecordType('medication')}
+              disabled={isEditMode}
             >
-              {isSearchingAI ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.aiSearchBtnIcon}>🤖</Text>
-              )}
+              <Text style={[styles.segmentText, recordType === 'medication' && styles.segmentActiveText]}>
+                {t(lang, 'addMedication.typeMed')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.segmentButton, recordType === 'vaccine' && styles.segmentActiveButton]}
+              onPress={() => !isEditMode && setRecordType('vaccine')}
+              disabled={isEditMode}
+            >
+              <Text style={[styles.segmentText, recordType === 'vaccine' && styles.segmentActiveText]}>
+                {t(lang, 'addMedication.typeVac')}
+              </Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>
+            {recordType === 'vaccine' ? t(lang, 'addMedication.vacNameLabel') : t(lang, 'addMedication.nameLabel')}
+          </Text>
+          <TextInput
+            style={styles.input}
+            value={name}
+            onChangeText={handleNameChange}
+            placeholder={t(lang, 'addMedication.namePlaceholder')}
+            placeholderTextColor={colors.textMuted}
+          />
           {activeDuplicateError && (
             <View style={styles.activeErrorAlert}>
               <Text style={styles.activeErrorText}>
@@ -400,17 +612,104 @@ export default function AddMedicationScreen() {
             </TouchableOpacity>
           )}
           {suggestions.length > 0 && (
-            <View style={styles.suggestionsContainer}>
+            <ScrollView
+              style={styles.suggestionsContainer}
+              nestedScrollEnabled={true}
+            >
               {suggestions.map((s, idx) => (
                 <TouchableOpacity key={idx} style={styles.suggestionItem} onPress={() => { setName(s); setSuggestions([]); }}>
                   <Text style={styles.suggestionText}>{s}</Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
           )}
         </View>
 
-        {/* Güç / Seviye --- Opsiyonel */}
+        {/* Barkod (Opsiyonel) --- Sadece İlaç türü için */}
+        {recordType === 'medication' && (
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>
+              {lang === 'tr' ? 'Barkod (Opsiyonel)' : 'Barcode (Optional)'}
+            </Text>
+            <View style={styles.inputSearchRow}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                value={barcode}
+                onChangeText={(val) => {
+                  const sanitized = val.replace(/[^0-9]/g, '');
+                  if (sanitized.length <= MAX_BARCODE_LENGTH) {
+                    setBarcode(sanitized);
+                  }
+                }}
+                maxLength={MAX_BARCODE_LENGTH}
+                placeholder={lang === 'tr' ? 'Barkod okutun veya yazın' : 'Scan or type barcode'}
+                placeholderTextColor={colors.textMuted}
+                keyboardType="numeric"
+              />
+              <TouchableOpacity 
+                style={[styles.barcodeSearchBtn, barcode.trim().length < MIN_BARCODE_LENGTH && styles.barcodeSearchBtnDisabled]} 
+                disabled={barcode.trim().length < MIN_BARCODE_LENGTH || isSearchingBarcode}
+                onPress={() => handleBarcodeLookup(barcode)}
+                activeOpacity={0.7}
+              >
+                {isSearchingBarcode ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.barcodeSearchBtnIcon}>🔍</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.barcodeBtn} 
+                onPress={() => {
+                  setScanned(false);
+                  setManualBarcode('');
+                  setShowBarcodeModal(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.barcodeBtnIcon}>📷</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Aşı Tarihleri (Çoklu Seçim) */}
+        {recordType === 'vaccine' && (
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>{t(lang, 'addMedication.vacDatesLabel')}</Text>
+            {dates.map((dateVal, idx) => (
+              <View key={idx} style={styles.dateSlotRow}>
+                <TouchableOpacity
+                  style={styles.dateSlotBtn}
+                  onPress={() => openDatePickerForIndex(idx)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.dateSlotBtnText}>📅 {formatDate(dateVal)}</Text>
+                </TouchableOpacity>
+                {dates.length > 1 && (
+                  <TouchableOpacity
+                    style={styles.dateSlotDeleteBtn}
+                    onPress={() => removeDateSlot(idx)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.dateSlotDeleteBtnText}>🗑️</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+            <TouchableOpacity
+              style={styles.addDateSlotBtn}
+              onPress={addDateSlot}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.addDateSlotBtnText}>{t(lang, 'addMedication.addDateBtn')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {recordType === 'medication' && (
+          <>
+            {/* Güç / Seviye --- Opsiyonel */}
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>
             {lang === 'tr' ? 'Güç / Seviye (Opsiyonel)' : 'Strength (Optional)'}
@@ -431,78 +730,6 @@ export default function AddMedicationScreen() {
             <Text style={styles.datePickerBtnText}>📅 {formatDate(startDate)}</Text>
           </TouchableOpacity>
         </View>
-
-      {/* ----------------- MODERN DATE PICKER MODAL ----------------- */}
-      <Modal transparent animationType="fade" visible={showStartDatePicker} onRequestClose={() => setShowStartDatePicker(false)}>
-        <View style={styles.pickerOverlay}>
-          <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder, padding: 0, overflow: 'hidden' }]}>
-            <View style={[styles.customDatePickerHeader, { backgroundColor: colors.primary }]}>
-              <Text style={styles.customDatePickerYear}>{new Date(startDate).getFullYear()}</Text>
-              <Text style={styles.customDatePickerDate}>
-                {new Date(startDate).toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-              </Text>
-            </View>
-            <View style={styles.customDatePickerBody}>
-              {Platform.OS === 'ios' ? (
-                <View style={{ paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md }}>
-                  <DateTimePicker
-                    value={new Date(startDate)}
-                    mode="date"
-                    display="spinner"
-                    onChange={(_, selectedDate) => {
-                      if (selectedDate) setStartDate(selectedDate.toISOString().split('T')[0]);
-                    }}
-                    themeVariant={theme}
-                    textColor={colors.textPrimary}
-                    style={{ height: 150 }}
-                  />
-                </View>
-              ) : (
-                /* Pure JS Custom Grid Date Picker for Android - Fully matches Theme! */
-                <View style={{ padding: SPACING.md }}>
-                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.lg }}>
-                      <TouchableOpacity onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() - 1, 1))} style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}>
-                         <Text style={{ color: colors.textPrimary }}>◀</Text>
-                      </TouchableOpacity>
-                      <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.textPrimary }}>
-                         {androidMonthView.toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { month: 'long', year: 'numeric' })}
-                      </Text>
-                      <TouchableOpacity onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 1))} style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}>
-                         <Text style={{ color: colors.textPrimary }}>▶</Text>
-                      </TouchableOpacity>
-                   </View>
-                   <View style={{ flexDirection: 'row', marginBottom: SPACING.md }}>
-                      {['Pt','Sa','Ça','Pe','Cu','Ct','Pz'].map((d, i) => <Text key={i} style={{ flex: 1, textAlign: 'center', color: colors.textSecondary, fontWeight: 'bold', fontSize: 12 }}>{d}</Text>)}
-                   </View>
-                   <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                      {Array.from({ length: (new Date(androidMonthView.getFullYear(), androidMonthView.getMonth(), 1).getDay() + 6) % 7 }).map((_, i) => <View key={`b-${i}`} style={{ width: '14.28%', aspectRatio: 1 }} />)}
-                      {Array.from({ length: new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 0).getDate() }, (_, i) => i + 1).map(d => {
-                         const dStr = `${androidMonthView.getFullYear()}-${(androidMonthView.getMonth()+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
-                         const isSelected = startDate === dStr;
-                         return (
-                            <TouchableOpacity key={d} onPress={() => setStartDate(dStr)} style={{ width: '14.28%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' }}>
-                               <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: isSelected ? colors.primary : 'transparent', justifyContent: 'center', alignItems: 'center' }}>
-                                  <Text style={{ color: isSelected ? '#fff' : colors.textPrimary, fontWeight: isSelected ? 'bold' : 'normal', fontSize: 15 }}>{d}</Text>
-                               </View>
-                            </TouchableOpacity>
-                         );
-                      })}
-                   </View>
-                </View>
-              )}
-
-              <View style={styles.customDatePickerActions}>
-                <TouchableOpacity style={styles.customDatePickerCancelBtn} onPress={() => setShowStartDatePicker(false)}>
-                  <Text style={[styles.customDatePickerActionText, { color: colors.textSecondary }]}>{t(lang, 'settings.cancel')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.customDatePickerOkBtn} onPress={() => setShowStartDatePicker(false)}>
-                  <Text style={[styles.customDatePickerActionText, { color: colors.primary, fontWeight: 'bold' }]}>{t(lang, 'addMedication.confirmBtn')}</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>{t(lang, 'addMedication.typeLabel')}</Text>
@@ -672,6 +899,8 @@ export default function AddMedicationScreen() {
             keyboardType="numeric"
           />
         </View>
+          </>
+        )}
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>{t(lang, 'addMedication.notesLabel')}</Text>
@@ -697,8 +926,212 @@ export default function AddMedicationScreen() {
           {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>{isEditMode ? `🔄 ${t(lang, 'addMedication.update')}` : `💾 ${t(lang, 'addMedication.save')}`}</Text>}
         </TouchableOpacity>
 
+      {/* ----------------- MODERN DATE PICKER MODAL ----------------- */}
+      <Modal transparent animationType="fade" visible={showStartDatePicker} onRequestClose={() => { setShowStartDatePicker(false); setActiveDateIndex(null); setSelectedPickerDate(null); }}>
+        <View style={styles.pickerOverlay}>
+          <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder, padding: 0, overflow: 'hidden' }]}>
+            <View style={[styles.customDatePickerHeader, { backgroundColor: colors.primary }]}>
+              <Text style={styles.customDatePickerYear}>
+                {new Date(selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate)).getFullYear()}
+              </Text>
+              <Text style={styles.customDatePickerDate}>
+                {new Date(selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate)).toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </Text>
+            </View>
+            <View style={styles.customDatePickerBody}>
+              {Platform.OS === 'ios' ? (
+                <View style={{ paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md }}>
+                  <DateTimePicker
+                    value={new Date(selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate))}
+                    mode="date"
+                    display="spinner"
+                    onChange={(_, selectedDate) => {
+                      if (selectedDate) {
+                        const formatted = selectedDate.toISOString().split('T')[0];
+                        setSelectedPickerDate(formatted);
+                      }
+                    }}
+                    themeVariant={theme}
+                    textColor={colors.textPrimary}
+                    style={{ height: 150 }}
+                  />
+                </View>
+              ) : (
+                /* Pure JS Custom Grid Date Picker for Android - Fully matches Theme! */
+                <View style={{ padding: SPACING.md }}>
+                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.lg }}>
+                      <TouchableOpacity onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() - 1, 1))} style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}>
+                         <Text style={{ color: colors.textPrimary }}>◀</Text>
+                      </TouchableOpacity>
+                      <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.textPrimary }}>
+                         {androidMonthView.toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { month: 'long', year: 'numeric' })}
+                      </Text>
+                      <TouchableOpacity onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 1))} style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}>
+                         <Text style={{ color: colors.textPrimary }}>▶</Text>
+                      </TouchableOpacity>
+                   </View>
+                   <View style={{ flexDirection: 'row', marginBottom: SPACING.md }}>
+                      {['Pt','Sa','Ça','Pe','Cu','Ct','Pz'].map((d, i) => <Text key={i} style={{ flex: 1, textAlign: 'center', color: colors.textSecondary, fontWeight: 'bold', fontSize: 12 }}>{d}</Text>)}
+                   </View>
+                   <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                      {Array.from({ length: (new Date(androidMonthView.getFullYear(), androidMonthView.getMonth(), 1).getDay() + 6) % 7 }).map((_, i) => <View key={`b-${i}`} style={{ width: '14.28%', aspectRatio: 1 }} />)}
+                      {Array.from({ length: new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 0).getDate() }, (_, i) => i + 1).map(d => {
+                         const dStr = `${androidMonthView.getFullYear()}-${(androidMonthView.getMonth()+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
+                         const isSelected = (selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate)) === dStr;
+                         return (
+                            <TouchableOpacity key={d} onPress={() => {
+                              setSelectedPickerDate(dStr);
+                            }} style={{ width: '14.28%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' }}>
+                               <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: isSelected ? colors.primary : 'transparent', justifyContent: 'center', alignItems: 'center' }}>
+                                  <Text style={{ color: isSelected ? '#fff' : colors.textPrimary, fontWeight: isSelected ? 'bold' : 'normal', fontSize: 15 }}>{d}</Text>
+                               </View>
+                            </TouchableOpacity>
+                         );
+                      })}
+                   </View>
+                </View>
+              )}
+
+              <View style={styles.customDatePickerActions}>
+                <TouchableOpacity style={styles.customDatePickerCancelBtn} onPress={() => { setShowStartDatePicker(false); setActiveDateIndex(null); setSelectedPickerDate(null); }}>
+                  <Text style={[styles.customDatePickerActionText, { color: colors.textSecondary }]}>{t(lang, 'settings.cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.customDatePickerOkBtn} onPress={() => {
+                  if (selectedPickerDate) {
+                    if (activeDateIndex !== null) {
+                      // Validate vaccine date!
+                      const today = getLocalDateString();
+                      if (selectedPickerDate < today) {
+                        showAlert({
+                          message: lang === 'tr' ? 'Aşı tarihi geçmiş bir tarih olamaz.' : 'Vaccine date cannot be in the past.',
+                          type: 'danger'
+                        });
+                        return;
+                      }
+                      if (dates.includes(selectedPickerDate) && dates[activeDateIndex] !== selectedPickerDate) {
+                        showAlert({
+                          message: lang === 'tr' ? 'Bu tarih zaten seçilmiş.' : 'This date is already selected.',
+                          type: 'danger'
+                        });
+                        return;
+                      }
+                      if (activeDateIndex > 0 && selectedPickerDate < dates[activeDateIndex - 1]) {
+                        showAlert({
+                          message: lang === 'tr' ? 'Aşı tarihi, bir önceki aşı tarihinden önce olamaz.' : 'Vaccine date cannot be earlier than the previous vaccine date.',
+                          type: 'danger'
+                        });
+                        return;
+                      }
+                      if (activeDateIndex < dates.length - 1 && selectedPickerDate > dates[activeDateIndex + 1]) {
+                        showAlert({
+                          message: lang === 'tr' ? 'Aşı tarihi, bir sonraki aşı tarihinden sonra olamaz.' : 'Vaccine date cannot be later than the next vaccine date.',
+                          type: 'danger'
+                        });
+                        return;
+                      }
+                      const newDates = [...dates];
+                      newDates[activeDateIndex] = selectedPickerDate;
+                      setDates(newDates);
+                    } else {
+                      setStartDate(selectedPickerDate);
+                    }
+                  }
+                  setShowStartDatePicker(false);
+                  setActiveDateIndex(null);
+                  setSelectedPickerDate(null);
+                }}>
+                  <Text style={[styles.customDatePickerActionText, { color: colors.primary, fontWeight: 'bold' }]}>{t(lang, 'addMedication.confirmBtn')}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
         <View style={{ height: SPACING.xxxl }} />
       </ScrollView>
+
+      {/* Barkod Tarayıcı ve Manuel Giriş Modalı */}
+      <Modal
+        visible={showBarcodeModal}
+        animationType="slide"
+        onRequestClose={() => {
+          if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+          }
+          setShowBarcodeModal(false);
+          setScanned(false);
+          setIsSearchingBarcode(false);
+        }}
+      >
+        <View style={styles.barcodeModalContainer}>
+          <View style={styles.barcodeModalHeader}>
+            <Text style={styles.barcodeModalTitle}>
+              {lang === 'tr' ? 'Barkod Sorgula' : 'Verify Barcode'}
+            </Text>
+            <TouchableOpacity 
+              onPress={() => {
+                if (abortControllerRef.current) {
+                  abortControllerRef.current.abort();
+                }
+                setShowBarcodeModal(false);
+                setScanned(false);
+                setIsSearchingBarcode(false);
+              }} 
+              style={styles.barcodeModalCloseBtn}
+            >
+              <Text style={{ fontSize: 24, color: colors.textPrimary }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          {isSearchingBarcode ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.loadingText}>
+                {lang === 'tr' ? 'İlaç bilgisi sorgulanıyor...' : 'Querying medication info...'}
+              </Text>
+            </View>
+          ) : (
+            <>
+              {permission && !permission.granted ? (
+                <View style={styles.permissionContainer}>
+                  <Text style={styles.permissionText}>
+                    {lang === 'tr' 
+                      ? 'Barkod okutabilmek için kamera izni vermeniz gerekmektedir.' 
+                      : 'Camera permission is required to scan barcodes.'}
+                  </Text>
+                  <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>
+                    <Text style={styles.permissionBtnText}>
+                      {lang === 'tr' ? 'İzin Ver' : 'Grant Permission'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.cameraWrapper}>
+                  {permission && permission.granted && (
+                    <CameraView
+                      style={StyleSheet.absoluteFillObject}
+                      facing="back"
+                      barcodeScannerSettings={{
+                        barcodeTypes: ['ean13', 'ean8', 'upc_a', 'upc_e', 'code128', 'code39'],
+                      }}
+                      onBarcodeScanned={scanned ? undefined : ({ data }) => {
+                        setScanned(true);
+                        handleBarcodeLookup(data);
+                      }}
+                    />
+                  )}
+                  <View style={styles.scanTargetOuter}>
+                    <View style={styles.scanTargetFrame}>
+                      <View style={styles.scanLaser} />
+                    </View>
+                  </View>
+                </View>
+              )}
+            </>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -709,10 +1142,35 @@ const getStyles = (colors: any) => StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: SPACING.xl, paddingTop: 60, paddingBottom: SPACING.lg,
     borderBottomWidth: 1, borderBottomColor: colors.surfaceBorder,
+    position: 'relative',
   },
-  backBtn: { width: 60 },
-  backBtnText: { fontSize: TYPOGRAPHY.fontSizeLg, color: colors.primary },
-  headerTitle: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
+  backBtn: {
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    borderRadius: RADIUS.full,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backBtnText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  headerTitle: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: SPACING.lg,
+    textAlign: 'center',
+    zIndex: -1,
+    fontSize: TYPOGRAPHY.fontSizeLg,
+    fontWeight: TYPOGRAPHY.fontWeightBold,
+    color: colors.textPrimary,
+    paddingHorizontal: 85,
+  },
   scroll: { flex: 1 },
   scrollContent: { padding: SPACING.xl },
   profileIndicator: {
@@ -729,15 +1187,75 @@ const getStyles = (colors: any) => StyleSheet.create({
     borderWidth: 1, borderColor: colors.surfaceBorder,
   },
   inputSearchRow: { flexDirection: 'row', gap: SPACING.sm, alignItems: 'center' },
-  aiSearchBtn: {
+  barcodeBtn: {
     width: 48, height: 48, borderRadius: RADIUS.md,
     backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
     shadowColor: colors.primary, shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3, shadowRadius: 6, elevation: 4,
   },
-  aiSearchBtnDisabled: { backgroundColor: colors.textMuted, shadowOpacity: 0 },
-  aiSearchBtnIcon: { fontSize: 24 },
-  suggestionsContainer: { backgroundColor: colors.surfaceElevated, borderRadius: RADIUS.md, marginTop: 4, borderWidth: 1, borderColor: colors.surfaceBorder, overflow: 'hidden' },
+  barcodeBtnIcon: { fontSize: 22, color: '#fff' },
+  barcodeSearchBtn: {
+    width: 48, height: 48, borderRadius: RADIUS.md,
+    backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center',
+    shadowColor: colors.secondary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 6, elevation: 4,
+  },
+  barcodeSearchBtnDisabled: {
+    backgroundColor: colors.surfaceBorder,
+    shadowColor: 'transparent',
+    opacity: 0.6,
+  },
+  barcodeSearchBtnIcon: { fontSize: 20, color: '#fff' },
+  barcodeModalContainer: { flex: 1, backgroundColor: colors.background, paddingVertical: 40 },
+  barcodeModalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: SPACING.xl, paddingBottom: SPACING.md,
+    borderBottomWidth: 1, borderBottomColor: colors.surfaceBorder,
+  },
+  barcodeModalTitle: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
+  barcodeModalCloseBtn: { padding: 4 },
+  loadingContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.md, backgroundColor: colors.background },
+  loadingText: { fontSize: TYPOGRAPHY.fontSizeMd, color: colors.textSecondary },
+  permissionContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: SPACING.xxl, gap: SPACING.lg, backgroundColor: colors.background },
+  permissionText: { fontSize: TYPOGRAPHY.fontSizeMd, color: colors.textSecondary, textAlign: 'center', lineHeight: 22 },
+  permissionBtn: { backgroundColor: colors.primary, borderRadius: RADIUS.md, paddingVertical: 12, paddingHorizontal: 24 },
+  permissionBtnText: { color: '#fff', fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: 'bold' },
+  cameraWrapper: { flex: 1, overflow: 'hidden', position: 'relative' },
+  scanTargetOuter: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  scanTargetFrame: {
+    width: 250, height: 250,
+    borderWidth: 2, borderColor: colors.primary,
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: 'transparent',
+  },
+  scanLaser: {
+    position: 'absolute', left: 0, right: 0, top: '50%',
+    height: 2, backgroundColor: colors.accent,
+  },
+  modalManualSection: {
+    padding: SPACING.xl, borderTopWidth: 1, borderTopColor: colors.surfaceBorder,
+    backgroundColor: colors.surface,
+  },
+  manualLabel: { fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightSemiBold, color: colors.textSecondary, marginBottom: SPACING.sm },
+  manualInputRow: { flexDirection: 'row', gap: SPACING.sm },
+  manualTextInput: {
+    flex: 1, backgroundColor: colors.surfaceElevated, borderRadius: RADIUS.md,
+    padding: SPACING.md, color: colors.textPrimary, borderWidth: 1, borderColor: colors.surfaceBorder,
+    fontSize: TYPOGRAPHY.fontSizeMd,
+  },
+  manualSearchBtn: {
+    backgroundColor: colors.primary, borderRadius: RADIUS.md,
+    paddingHorizontal: 20, justifyContent: 'center', alignItems: 'center',
+  },
+  manualSearchBtnDisabled: { opacity: 0.5 },
+  manualSearchBtnText: { color: '#fff', fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: 'bold' },
+  suggestionsContainer: { backgroundColor: colors.surfaceElevated, borderRadius: RADIUS.md, marginTop: 4, borderWidth: 1, borderColor: colors.surfaceBorder, overflow: 'hidden', maxHeight: 180 },
   suggestionItem: { padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: colors.surfaceBorder },
   suggestionText: { color: colors.textPrimary, fontSize: TYPOGRAPHY.fontSizeSm },
   reuseAlert: { backgroundColor: colors.primary + '22', borderRadius: RADIUS.md, padding: SPACING.md, marginTop: 8, borderWidth: 1, borderColor: colors.primary + '44' },
@@ -834,4 +1352,82 @@ const getStyles = (colors: any) => StyleSheet.create({
   customDatePickerCancelBtn: { padding: SPACING.md },
   customDatePickerOkBtn: { padding: SPACING.md },
   customDatePickerActionText: { fontSize: TYPOGRAPHY.fontSizeMd, textTransform: 'uppercase' },
+  segmentContainer: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: RADIUS.md,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    marginBottom: SPACING.md,
+  },
+  segmentButton: {
+    flex: 1,
+    paddingVertical: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: RADIUS.sm,
+  },
+  segmentActiveButton: {
+    backgroundColor: colors.primary,
+  },
+  segmentText: {
+    fontSize: TYPOGRAPHY.fontSizeSm,
+    fontWeight: TYPOGRAPHY.fontWeightMedium,
+    color: colors.textSecondary,
+  },
+  segmentActiveText: {
+    color: '#fff',
+    fontWeight: TYPOGRAPHY.fontWeightBold,
+  },
+  dateSlotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    marginBottom: SPACING.sm,
+  },
+  dateSlotBtn: {
+    flex: 1,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dateSlotBtnText: {
+    fontSize: TYPOGRAPHY.fontSizeMd,
+    color: colors.textPrimary,
+    fontWeight: TYPOGRAPHY.fontWeightMedium,
+  },
+  dateSlotDeleteBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: RADIUS.md,
+    backgroundColor: colors.danger + '15',
+    borderWidth: 1,
+    borderColor: colors.danger + '33',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateSlotDeleteBtnText: {
+    fontSize: 18,
+  },
+  addDateSlotBtn: {
+    backgroundColor: colors.primary + '15',
+    borderRadius: RADIUS.md,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.primary + '66',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: SPACING.xs,
+  },
+  addDateSlotBtnText: {
+    fontSize: TYPOGRAPHY.fontSizeMd,
+    color: colors.primary,
+    fontWeight: TYPOGRAPHY.fontWeightSemiBold,
+  },
 });

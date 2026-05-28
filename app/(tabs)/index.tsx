@@ -11,8 +11,8 @@ import {
 import { router, useFocusEffect } from 'expo-router';
 import { useStore } from '../../store/useStore';
 import { getMedications, Medication, addMedicationLog, MedicationLog, updateMedication } from '../../services/firestore';
-import { checkAndRefreshEndOfDayNotification, rescheduleIntervalNotificationAfterTake, scheduleMedicationNotification, cancelMedicationNotifications, requestNotificationPermission } from '../../services/notifications';
-import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
+import { checkAndRefreshEndOfDayNotification, rescheduleIntervalNotificationAfterTake, scheduleMedicationNotification, cancelMedicationNotifications, requestNotificationPermission, triggerCriticalStockNotification } from '../../services/notifications';
+import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, STOCK_THRESHOLD_CRITICAL, STOCK_THRESHOLD_WARNING } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
 import { getLocalDateString } from '../../utils/date';
 
@@ -47,8 +47,21 @@ function computeNewStartDateForPeriod(intervalDays: number): string {
   return getLocalDateString();
 }
 
+/** YYYY-MM-DD formatındaki tarihe gün ekler ve yine YYYY-MM-DD döner */
+function addDaysToDateString(dateStr: string, days: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + days);
+  return getLocalDateString(date);
+}
+
 export default function HomeScreen() {
-  const { user, profiles, activeProfileId, setActiveProfileId, medications: allMedications, medicationLogs, addMedicationLogState, updateMedication: updateMedInStore, language, theme, showAlert } = useStore();
+  const {
+    user, profiles, activeProfileId, setActiveProfileId,
+    medications: allMedications, medicationLogs, addMedicationLogState,
+    updateMedication: updateMedInStore, language, theme, showAlert,
+    dismissedStockWarnings, dismissStockWarning
+  } = useStore();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [tick, setTick] = useState(0); // Her dakika UI'ı tazeler
 
@@ -181,6 +194,22 @@ export default function HomeScreen() {
     addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
     await addMedicationLog(logData);
 
+    // Kritik stok uyarısı kontrolü
+    if (med && med.totalQuantity !== undefined) {
+      const updatedState = useStore.getState();
+      const updatedLogs = updatedState.medicationLogs || [];
+      const takenCount = updatedLogs.filter((l: any) => l.medicationId === medId && l.status === 'taken').length;
+      const dosageVal = parseFloat(med.dosage || '1');
+      const newRemaining = Math.max(0, med.totalQuantity - (takenCount * dosageVal));
+      const oldRemaining = newRemaining + dosageVal;
+
+      if (newRemaining <= STOCK_THRESHOLD_CRITICAL && oldRemaining > STOCK_THRESHOLD_CRITICAL) {
+        triggerCriticalStockNotification(med.name, STOCK_THRESHOLD_CRITICAL, lang);
+      } else if (newRemaining <= STOCK_THRESHOLD_WARNING && oldRemaining > STOCK_THRESHOLD_WARNING) {
+        triggerCriticalStockNotification(med.name, STOCK_THRESHOLD_WARNING, lang);
+      }
+    }
+
     // Periyodik bildirim: alım sonrası sonraki tarihi zamanla
     if (isIntervalDrug && med) {
       rescheduleIntervalNotificationAfterTake(
@@ -196,6 +225,43 @@ export default function HomeScreen() {
     if (isIntervalDrug && med && diff === -2000) {
       setTimeout(() => askPeriodReset(med), 600);
     }
+  };
+
+  const executePostpone = async (med: Medication, time: string, targetStr: string, newStartDate: string, successMessage: string) => {
+    if (!activeProfile?.id) return;
+    const lang = language as LanguageCode;
+
+    const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
+      profileId: activeProfile.id,
+      medicationId: med.id,
+      expectedTime: time,
+      takenAt: new Date().toISOString(),
+      scheduledDate: targetStr,
+      status: 'postponed',
+    };
+    addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
+    await addMedicationLog(logData);
+
+    await updateMedication(med.id, { startDate: newStartDate });
+    updateMedInStore(med.id, { startDate: newStartDate });
+
+    const hasPermission = await requestNotificationPermission();
+    if (hasPermission) {
+      await cancelMedicationNotifications(med.id);
+      for (const t of med.times) {
+        await scheduleMedicationNotification(
+          med.id, med.name, med.dosage, t,
+          lang, med.intervalDays || 1, newStartDate
+        );
+      }
+    }
+
+    checkAndRefreshEndOfDayNotification(lang);
+
+    showAlert({
+      message: successMessage,
+      type: 'success',
+    });
   };
 
   const handlePostpone = async (medId: string, time: string, diff?: number) => {
@@ -216,40 +282,46 @@ export default function HomeScreen() {
     const med = medications.find(m => m.id === medId);
     if (!med) return;
 
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = getLocalDateString(tomorrow);
+    const nextDayStr = addDaysToDateString(targetStr, 1);
 
-    const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
-      profileId: activeProfile.id,
-      medicationId: medId,
-      expectedTime: time,
-      takenAt: new Date().toISOString(),
-      scheduledDate: targetStr,
-      status: 'postponed',
-    };
-    addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
-    await addMedicationLog(logData);
+    // Eğer periyot 1 gün veya belirtilmemişse önce onay sor, sonra yarına ertele
+    if (!med.intervalDays || med.intervalDays <= 1) {
+      const isVaccine = med.type === 'vaccine';
+      const message = lang === 'tr'
+        ? `"${med.name}" ${isVaccine ? 'aşısını' : 'ilacını'} yarına ertelemek istediğinizden emin misiniz?`
+        : `Are you sure you want to postpone "${med.name}" ${isVaccine ? 'vaccine' : 'medication'} to tomorrow?`;
 
-    await updateMedication(med.id, { startDate: tomorrowStr });
-    updateMedInStore(med.id, { startDate: tomorrowStr });
-
-    const hasPermission = await requestNotificationPermission();
-    if (hasPermission) {
-      await cancelMedicationNotifications(med.id);
-      for (const t of med.times) {
-        await scheduleMedicationNotification(
-          med.id, med.name, med.dosage, t,
-          lang, med.intervalDays || 1, tomorrowStr
-        );
-      }
+      showAlert({
+        message,
+        type: 'warning',
+        buttons: [
+          { text: t(lang, 'settings.cancel'), style: 'cancel' },
+          {
+            text: t(lang, 'home.postponeBtn'),
+            onPress: () => executePostpone(med, time, targetStr, nextDayStr, t(lang, 'home.postponeSuccess')),
+          }
+        ]
+      });
+      return;
     }
 
-    checkAndRefreshEndOfDayNotification(lang);
+    // Periyodik ilaç ise kullanıcıya sor: 1 gün mü yoksa 1 periyot mu?
+    const nextPeriodStr = addDaysToDateString(targetStr, med.intervalDays);
 
     showAlert({
-      message: t(lang, 'home.postponeSuccess'),
-      type: 'success',
+      message: t(lang, 'home.postponeChoose'),
+      type: 'info',
+      buttons: [
+        { text: t(lang, 'settings.cancel'), style: 'cancel' },
+        {
+          text: t(lang, 'home.postponeNextDay'),
+          onPress: () => executePostpone(med, time, targetStr, nextDayStr, t(lang, 'home.postponeSuccess')),
+        },
+        {
+          text: t(lang, 'home.postponeNextPeriod'),
+          onPress: () => executePostpone(med, time, targetStr, nextPeriodStr, t(lang, 'home.postponeSuccessPeriod')),
+        },
+      ],
     });
   };
 
@@ -271,19 +343,22 @@ export default function HomeScreen() {
 
     medications.forEach((med) => {
       // 1. DÜNÜ KONTROL ET (Dünden kalan içilmemiş ilaç var mı?)
-      // Önemli: ilaç dün veya daha önce başlamış olmalı (startDate <= yesterdayStr)
-      const medStartedBeforeToday = med.startDate <= yesterdayStr;
       let isForYesterday = false;
-      if (medStartedBeforeToday) {
-        if (med.intervalDays && med.intervalDays > 1) {
-          const start = new Date(med.startDate + 'T00:00:00');
-          const yesterdayDate = new Date();
-          yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-          yesterdayDate.setHours(0, 0, 0, 0);
-          const daysDiff = Math.floor((yesterdayDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-          if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForYesterday = true;
-        } else {
-          isForYesterday = true;
+      if (med.type === 'vaccine') {
+        isForYesterday = !!med.dates && med.dates.includes(yesterdayStr);
+      } else {
+        const medStartedBeforeToday = med.startDate <= yesterdayStr;
+        if (medStartedBeforeToday) {
+          if (med.intervalDays && med.intervalDays > 1) {
+            const start = new Date(med.startDate + 'T00:00:00');
+            const yesterdayDate = new Date();
+            yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+            yesterdayDate.setHours(0, 0, 0, 0);
+            const daysDiff = Math.floor((yesterdayDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForYesterday = true;
+          } else {
+            isForYesterday = true;
+          }
         }
       }
 
@@ -307,14 +382,18 @@ export default function HomeScreen() {
 
       // 2. BUGÜNÜ KONTROL ET
       let isForToday = false;
-      if (med.intervalDays && med.intervalDays > 1) {
-        const start = new Date(med.startDate + 'T00:00:00');
-        const todayDate = new Date();
-        todayDate.setHours(0, 0, 0, 0);
-        const daysDiff = Math.floor((todayDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-        if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForToday = true;
+      if (med.type === 'vaccine') {
+        isForToday = !!med.dates && med.dates.includes(todayStr);
       } else {
-        isForToday = true;
+        if (med.intervalDays && med.intervalDays > 1) {
+          const start = new Date(med.startDate + 'T00:00:00');
+          const todayDate = new Date();
+          todayDate.setHours(0, 0, 0, 0);
+          const daysDiff = Math.floor((todayDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForToday = true;
+        } else {
+          isForToday = true;
+        }
       }
 
       if (isForToday) {
@@ -370,6 +449,27 @@ export default function HomeScreen() {
 
   const { upcoming: upcomingMeds, overdue: overdueMeds, completed: completedMeds } = getMedicationLists();
 
+  const medWarnings: { med: Medication; threshold: number; remaining: number; key: string }[] = [];
+  medications.forEach((med) => {
+    if (med.type !== 'vaccine' && med.totalQuantity !== undefined) {
+      const takenCount = logs.filter((l) => l.medicationId === med.id && l.status === 'taken').length;
+      const dosageVal = parseFloat(med.dosage || '1');
+      const remaining = Math.max(0, med.totalQuantity - (takenCount * dosageVal));
+
+      if (remaining <= STOCK_THRESHOLD_CRITICAL) {
+        const key = `${med.id}-${STOCK_THRESHOLD_CRITICAL}`;
+        if (!(dismissedStockWarnings || []).includes(key)) {
+          medWarnings.push({ med, threshold: STOCK_THRESHOLD_CRITICAL, remaining, key });
+        }
+      } else if (remaining <= STOCK_THRESHOLD_WARNING) {
+        const key = `${med.id}-${STOCK_THRESHOLD_WARNING}`;
+        if (!(dismissedStockWarnings || []).includes(key)) {
+          medWarnings.push({ med, threshold: STOCK_THRESHOLD_WARNING, remaining, key });
+        }
+      }
+    }
+  });
+
   return (
     <View style={styles.container}>
       <View style={styles.bgGlow} />
@@ -393,6 +493,38 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Kritik Stok Uyarıları */}
+        {medWarnings.length > 0 && (
+          <View style={styles.section}>
+            {medWarnings.map((warning) => (
+              <View key={warning.key} style={[styles.warningCard, warning.threshold === STOCK_THRESHOLD_CRITICAL && styles.warningCardDanger]}>
+                <View style={styles.warningCardHeader}>
+                  <Text style={styles.warningCardIcon}>⚠️</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.warningCardTitle}>
+                      {language === 'tr' ? 'Kritik Stok Uyarısı' : 'Critical Stock Alert'}
+                    </Text>
+                    <Text style={styles.warningCardText}>
+                      {language === 'tr'
+                        ? `"${warning.med.name}" için kalan stok ${warning.remaining} adettir! (Kritik Eşik: ${warning.threshold})`
+                        : `Remaining stock for "${warning.med.name}" is ${warning.remaining} units! (Critical Threshold: ${warning.threshold})`}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={[styles.warningCardDismissBtn, warning.threshold === STOCK_THRESHOLD_CRITICAL && styles.warningCardDismissBtnDanger]}
+                  onPress={() => dismissStockWarning(warning.key)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.warningCardDismissText, warning.threshold === STOCK_THRESHOLD_CRITICAL && styles.warningCardDismissTextDanger]}>
+                    {language === 'tr' ? 'Tamam' : 'OK'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
+
         {profiles.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Profil</Text>
@@ -415,15 +547,24 @@ export default function HomeScreen() {
 
         <View style={styles.statsRow}>
           <View style={[styles.statCard, { borderLeftColor: colors.primary }]}>
-            <Text style={styles.statValue}>{medications.length}</Text>
+            <View style={styles.statCardHeader}>
+              <Text style={styles.statValue}>{medications.length}</Text>
+              <Text style={styles.statIcon}>💊</Text>
+            </View>
             <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.activeMed')}</Text>
           </View>
           <View style={[styles.statCard, { borderLeftColor: colors.secondary }]}>
-            <Text style={styles.statValue}>{completedMeds.length}</Text>
+            <View style={styles.statCardHeader}>
+              <Text style={styles.statValue}>{completedMeds.length}</Text>
+              <Text style={styles.statIcon}>✅</Text>
+            </View>
             <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.completed')}</Text>
           </View>
           <View style={[styles.statCard, { borderLeftColor: colors.accent }]}>
-            <Text style={styles.statValue}>{upcomingMeds.length}</Text>
+            <View style={styles.statCardHeader}>
+              <Text style={styles.statValue}>{upcomingMeds.length}</Text>
+              <Text style={styles.statIcon}>⏳</Text>
+            </View>
             <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.upcoming')}</Text>
           </View>
         </View>
@@ -451,7 +592,9 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.upcomingInfo}>
                     <Text style={styles.upcomingName}>{item.med.name}</Text>
-                    <Text style={styles.upcomingDose}>{item.med.dosage} {item.med.unit}</Text>
+                    {item.med.type !== 'vaccine' && (
+                      <Text style={styles.upcomingDose}>{item.med.dosage} {item.med.unit}</Text>
+                    )}
                     {item.label ? (
                       <Text style={styles.overdueAgo}>{item.label}</Text>
                     ) : (
@@ -494,7 +637,9 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.upcomingInfo}>
                     <Text style={styles.upcomingName}>{item.med.name}</Text>
-                    <Text style={styles.upcomingDose}>{item.med.dosage} {item.med.unit}</Text>
+                    {item.med.type !== 'vaccine' && (
+                      <Text style={styles.upcomingDose}>{item.med.dosage} {item.med.unit}</Text>
+                    )}
                     <Text style={styles.upcomingDiff}>
                       {isPast ? t(language as LanguageCode, 'home.passed') : item.diff === 0 ? t(language as LanguageCode, 'home.now') : `${item.diff} ${t(language as LanguageCode, 'home.minsLater')}`}
                     </Text>
@@ -525,7 +670,9 @@ export default function HomeScreen() {
                 </View>
                 <View style={styles.completedInfo}>
                   <Text style={styles.completedName}>{item.med.name}</Text>
-                  <Text style={styles.completedMeta}>{item.time} {t(language as LanguageCode, 'home.completedTarget')}</Text>
+                  <Text style={styles.completedMeta}>
+                    {item.time} {item.med.type === 'vaccine' ? (language === 'tr' ? 'tamamlandı.' : 'completed.') : t(language as LanguageCode, 'home.completedTarget')}
+                  </Text>
                 </View>
               </View>
             ))}
@@ -554,11 +701,15 @@ export default function HomeScreen() {
                 activeOpacity={0.8}
               >
                 <View style={styles.medIconContainer}>
-                  <Text style={styles.medIcon}>💊</Text>
+                  <Text style={styles.medIcon}>{med.type === 'vaccine' ? '🛡️' : '💊'}</Text>
                 </View>
                 <View style={styles.medInfo}>
                   <Text style={styles.medName}>{med.name}</Text>
-                  <Text style={styles.medDose}>{med.dosage} {med.unit}{med.strength ? ` · ${med.strength}` : ''}</Text>
+                  {med.type === 'vaccine' ? (
+                    <Text style={styles.medDose}>{language === 'tr' ? 'Aşı' : 'Vaccine'}</Text>
+                  ) : (
+                    <Text style={styles.medDose}>{med.dosage} {med.unit}{med.strength ? ` · ${med.strength}` : ''}</Text>
+                  )}
                   <Text style={styles.medTimes}>{(med.times || []).join(' · ')}</Text>
                 </View>
                 <Text style={styles.medArrow}>›</Text>
@@ -605,7 +756,18 @@ const getStyles = (colors: any) => StyleSheet.create({
   section: { paddingHorizontal: SPACING.xl, marginBottom: SPACING.xxl },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
   sectionTitle: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightSemiBold, color: colors.textPrimary, marginBottom: SPACING.md },
-  addLink: { fontSize: TYPOGRAPHY.fontSizeMd, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightSemiBold },
+  addLink: {
+    backgroundColor: colors.primary + '18',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: RADIUS.full,
+    fontSize: 13,
+    color: colors.primary,
+    fontWeight: 'bold',
+    borderWidth: 1,
+    borderColor: colors.primary + '40',
+    overflow: 'hidden',
+  },
   profileScroll: { flexDirection: 'row' },
   profileChip: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.xs,
@@ -623,7 +785,13 @@ const getStyles = (colors: any) => StyleSheet.create({
     borderRadius: RADIUS.lg, padding: SPACING.lg,
     borderLeftWidth: 3, borderWidth: 1, borderColor: colors.surfaceBorder,
   },
+  statCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   statValue: { fontSize: TYPOGRAPHY.fontSize2xl, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
+  statIcon: { fontSize: 18 },
   statLabel: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.textSecondary, marginTop: 2 },
   emptyCard: {
     backgroundColor: colors.surfaceElevated, borderRadius: RADIUS.lg,
@@ -736,4 +904,61 @@ const getStyles = (colors: any) => StyleSheet.create({
   completedInfo: { flex: 1 },
   completedName: { fontSize: TYPOGRAPHY.fontSizeMd, color: colors.textSecondary, textDecorationLine: 'line-through' },
   completedMeta: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.textMuted },
+  warningCard: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    marginBottom: SPACING.sm,
+    borderWidth: 1.5,
+    borderColor: colors.warning + '88',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: SPACING.md,
+  },
+  warningCardDanger: {
+    borderColor: colors.danger + '88',
+  },
+  warningCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    flex: 1,
+  },
+  warningCardIcon: {
+    fontSize: 24,
+  },
+  warningCardTitle: {
+    fontSize: TYPOGRAPHY.fontSizeMd,
+    fontWeight: TYPOGRAPHY.fontWeightBold,
+    color: colors.textPrimary,
+    marginBottom: 2,
+  },
+  warningCardText: {
+    fontSize: TYPOGRAPHY.fontSizeSm,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  warningCardDismissBtn: {
+    backgroundColor: colors.warning + '25',
+    borderColor: colors.warning,
+    borderWidth: 1,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  warningCardDismissBtnDanger: {
+    backgroundColor: colors.danger + '25',
+    borderColor: colors.danger,
+  },
+  warningCardDismissText: {
+    fontSize: TYPOGRAPHY.fontSizeSm,
+    color: colors.warning,
+    fontWeight: TYPOGRAPHY.fontWeightBold,
+  },
+  warningCardDismissTextDanger: {
+    color: colors.danger,
+  },
 });

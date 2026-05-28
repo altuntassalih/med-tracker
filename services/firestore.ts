@@ -11,6 +11,7 @@ import {
   getDocs,
   serverTimestamp,
   setDoc,
+  getDoc,
   onSnapshot,
   Unsubscribe,
 } from 'firebase/firestore';
@@ -30,6 +31,9 @@ export interface Profile {
   isMain: boolean;
   age?: number;
   avatar?: string;
+  height?: number;
+  weight?: number;
+  targetWeight?: number;
   createdAt?: any;
 }
 
@@ -51,6 +55,8 @@ export interface Medication {
   strength?: string;
   // Opsiyonel: toplam ilaç adedi (kalan hesabı için)
   totalQuantity?: number;
+  // Opsiyonel: ilacın barkod numarası
+  barcode?: string;
   createdAt?: any;
 }
 
@@ -302,4 +308,61 @@ export const subscribeToGlobalMedications = (callback: (meds: string[]) => void)
   }, (err) => {
     console.log('Global meds selection sync error:', err);
   });
+};
+
+export interface BarcodeRecord {
+  barcode: string;
+  name: string;
+  type: string;
+  dosage: string;
+  unit: string;
+  strength?: string;
+  notes?: string;
+  createdAt?: any;
+}
+
+// Barkod veritabanından ilacı sorgula (İki Katmanlı Önbellek: 1. Kullanıcıya Özel, 2. Küresel)
+export const getMedicationByBarcode = async (barcode: string, userId: string): Promise<BarcodeRecord | null> => {
+  const firestore = getDb();
+  if (!firestore) return null;
+  const trimmed = barcode.trim();
+  try {
+    // 1. Önce kullanıcının kendi kaydettiği barkodlara bak
+    const userDocRef = doc(firestore, 'user_barcodes', `${userId}_${trimmed}`);
+    const userDocSnap = await getDoc(userDocRef);
+    if (userDocSnap.exists()) {
+      return { barcode: trimmed, ...userDocSnap.data() } as BarcodeRecord;
+    }
+
+    // 2. Bulunamazsa küresel doğrulanmış barkod veritabanına bak
+    const globalDocRef = doc(firestore, 'barcodes', trimmed);
+    const globalDocSnap = await getDoc(globalDocRef);
+    if (globalDocSnap.exists()) {
+      return { barcode: trimmed, ...globalDocSnap.data() } as BarcodeRecord;
+    }
+    return null;
+  } catch (_err) {
+    return null;
+  }
+};
+
+// Barkod veritabanına yeni ilaç kaydet (Güvenlik için kullanıcının kendi özel önbelleğine yazar)
+export const saveMedicationBarcode = async (userId: string, record: BarcodeRecord): Promise<void> => {
+  const firestore = getDb();
+  if (!firestore) return;
+  const trimmed = record.barcode.trim();
+  try {
+    const docRef = doc(firestore, 'user_barcodes', `${userId}_${trimmed}`);
+    await setDoc(docRef, {
+      name: record.name,
+      type: record.type,
+      dosage: record.dosage,
+      unit: record.unit,
+      strength: record.strength || '',
+      notes: record.notes || '',
+      createdAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (_err) {
+    // Kaydetme hatası durumunda sessizce yoksay
+  }
 };

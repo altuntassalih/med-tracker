@@ -17,6 +17,9 @@ export interface Profile {
   isMain: boolean;
   avatar?: string;
   age?: number;
+  height?: number;
+  weight?: number;
+  targetWeight?: number;
 }
 
 export interface Medication {
@@ -37,6 +40,10 @@ export interface Medication {
   strength?: string;
   // Opsiyonel: toplam ilaç adedi (kalan hesabı için)
   totalQuantity?: number;
+  // Opsiyonel: çoklu aşı tarihleri (YYYY-MM-DD)
+  dates?: string[];
+  // Opsiyonel: ilacın barkod numarası
+  barcode?: string;
 }
 
 export interface AlertConfig {
@@ -68,6 +75,7 @@ interface AppState {
   quietHoursEnabled: boolean;
   notificationsEnabled: boolean;
   autoMarkMissedAsTaken: boolean;
+  dismissedStockWarnings: string[];
   setUser: (user: User | null) => void;
   setProfiles: (profiles: Profile[]) => void;
   addProfile: (profile: Profile) => void;
@@ -93,9 +101,12 @@ interface AppState {
   setQuietHoursEnabled: (enabled: boolean) => void;
   setNotificationsEnabled: (enabled: boolean) => void;
   setAutoMarkMissedAsTaken: (enabled: boolean) => void;
+  dismissStockWarning: (key: string) => void;
   logout: () => void;
   showAlert: (config: AlertConfig) => void;
   hideAlert: () => void;
+  hasHydrated: boolean;
+  setHasHydrated: (val: boolean) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -118,6 +129,7 @@ export const useStore = create<AppState>()(
       quietHoursEnabled: false,
       notificationsEnabled: true,
       autoMarkMissedAsTaken: false,
+      dismissedStockWarnings: [],
       setUser: (user) => set({ user }),
       setProfiles: (profiles) => set({ profiles }),
       addProfile: (profile) => set((state) => ({ profiles: [...state.profiles, profile] })),
@@ -155,13 +167,23 @@ export const useStore = create<AppState>()(
       setQuietHoursEnabled: (enabled) => set({ quietHoursEnabled: enabled }),
       setNotificationsEnabled: (enabled) => set({ notificationsEnabled: enabled }),
       setAutoMarkMissedAsTaken: (enabled) => set({ autoMarkMissedAsTaken: enabled }),
+      dismissStockWarning: (key) => set((state) => ({
+        dismissedStockWarnings: [...(state.dismissedStockWarnings || []), key]
+      })),
       logout: () => set({ user: null }),
       showAlert: (alert) => set({ alert }),
       hideAlert: () => set({ alert: null }),
+      hasHydrated: false,
+      setHasHydrated: (hasHydrated) => set({ hasHydrated }),
     }),
     {
       name: 'med-tracker-storage',
       storage: createJSONStorage(() => AsyncStorage),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.setHasHydrated(true);
+        }
+      },
     }
   )
 );

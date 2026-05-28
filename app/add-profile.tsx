@@ -8,11 +8,15 @@ import { useStore } from '../store/useStore';
 import { createProfile } from '../services/firestore';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, AVATAR_OPTIONS } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
+import { calculateBmi } from '../utils/bmi';
 
 export default function AddProfileScreen() {
   const { user, addProfile, profiles, setActiveProfileId, theme, language } = useStore();
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
+  const [height, setHeight] = useState('');
+  const [weight, setWeight] = useState('');
+  const [targetWeight, setTargetWeight] = useState('');
   const [selectedAvatar, setSelectedAvatar] = useState<string>(AVATAR_OPTIONS[0]);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -33,6 +37,9 @@ export default function AddProfileScreen() {
         isMain: isFirst,
         age: age ? parseInt(age, 10) : undefined,
         avatar: selectedAvatar,
+        height: height ? parseFloat(height) : undefined,
+        weight: weight ? parseFloat(weight) : undefined,
+        targetWeight: targetWeight ? parseFloat(targetWeight) : undefined,
       });
 
       addProfile(newProfile);
@@ -103,10 +110,73 @@ export default function AddProfileScreen() {
           />
         </View>
 
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>{lang === 'tr' ? 'Boy (cm - Opsiyonel)' : 'Height (cm - Optional)'}</Text>
+          <TextInput
+            style={styles.input}
+            value={height}
+            onChangeText={(val) => setHeight(val.replace(/[^0-9]/g, ''))}
+            placeholder={lang === 'tr' ? 'örn: 175' : 'e.g. 175'}
+            placeholderTextColor={colors.textMuted}
+            keyboardType="numeric"
+            maxLength={3}
+          />
+        </View>
+
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>{lang === 'tr' ? 'Kilo (kg - Opsiyonel)' : 'Weight (kg - Optional)'}</Text>
+          <TextInput
+            style={styles.input}
+            value={weight}
+            onChangeText={(val) => setWeight(val.replace(/[^0-9.]/g, ''))}
+            placeholder={lang === 'tr' ? 'örn: 70' : 'e.g. 70'}
+            placeholderTextColor={colors.textMuted}
+            keyboardType="numeric"
+            maxLength={5}
+          />
+        </View>
+
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>{lang === 'tr' ? 'Hedef Kilo (kg - Opsiyonel)' : 'Target Weight (kg - Optional)'}</Text>
+          <TextInput
+            style={styles.input}
+            value={targetWeight}
+            onChangeText={(val) => setTargetWeight(val.replace(/[^0-9.]/g, ''))}
+            placeholder={lang === 'tr' ? 'örn: 65' : 'e.g. 65'}
+            placeholderTextColor={colors.textMuted}
+            keyboardType="numeric"
+            maxLength={5}
+          />
+        </View>
+
+        {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang) && (
+          <View style={[
+            styles.bmiBadge, 
+            { 
+              backgroundColor: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color + '15', 
+              borderColor: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color 
+            }
+          ]}>
+            <Text style={[styles.bmiText, { color: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color }]}>
+              📊 BKİ: {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.bmi} ({calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.category})
+            </Text>
+          </View>
+        )}
+
         <View style={styles.previewCard}>
           <Text style={styles.previewEmoji}>{selectedAvatar}</Text>
           <Text style={styles.previewName}>{name || 'Profil Adı'}</Text>
-          {age ? <Text style={styles.previewAge}>{age} yaşında</Text> : null}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: SPACING.sm, marginTop: 4 }}>
+            {age ? <Text style={styles.previewAge}>{age} yaşında</Text> : null}
+            {height ? <Text style={styles.previewAge}>• {height} cm</Text> : null}
+            {weight ? <Text style={styles.previewAge}>• {weight} kg</Text> : null}
+            {targetWeight ? <Text style={styles.previewAge}>• Hedef: {targetWeight} kg</Text> : null}
+          </View>
+          {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang) && (
+            <Text style={[styles.previewAge, { color: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color, fontWeight: 'bold', marginTop: 4 }]}>
+              BKİ: {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.bmi} ({calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.category})
+            </Text>
+          )}
         </View>
 
         <TouchableOpacity
@@ -173,4 +243,15 @@ const getStyles = (colors: any) => StyleSheet.create({
   },
   saveButtonDisabled: { opacity: 0.6 },
   saveButtonText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: '#fff' },
+  bmiBadge: {
+    padding: SPACING.md,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    marginTop: SPACING.sm,
+    alignItems: 'center',
+  },
+  bmiText: {
+    fontSize: TYPOGRAPHY.fontSizeMd,
+    fontWeight: 'bold',
+  },
 });
