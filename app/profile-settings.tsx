@@ -147,28 +147,29 @@ export default function ProfileSettingsScreen() {
         <View style={{ width: 60 }} />
       </View>
 
-      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
         <View style={styles.content}>
           <View style={styles.avatarContainer}>
             <View style={styles.avatarCircle}>
               {avatar.startsWith('data:image/') ? (
-                <Image source={{ uri: avatar }} style={{ width: 80, height: 80, borderRadius: 40 }} />
+                <Image source={{ uri: avatar }} style={{ width: 90, height: 90, borderRadius: 45 }} />
               ) : (
                 <Text style={styles.avatarLetter}>{avatar}</Text>
               )}
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.md, marginTop: SPACING.sm }}>
-              <Text style={styles.avatarHint}>{lang === 'tr' ? 'Avatar / Fotoğraf Seçin' : 'Select Avatar / Photo'}</Text>
-              <TouchableOpacity 
-                style={[styles.customPhotoBtn, avatar.startsWith('data:image/') && styles.customPhotoBtnActive]} 
-                onPress={handlePickImage}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.customPhotoBtnText, { color: avatar.startsWith('data:image/') ? '#fff' : colors.primary }]}>
-                  📸 {lang === 'tr' ? 'Fotoğraf Yükle' : 'Upload Photo'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity 
+              style={[styles.customPhotoBtn, avatar.startsWith('data:image/') && styles.customPhotoBtnActive]} 
+              onPress={handlePickImage}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.customPhotoBtnText, { color: avatar.startsWith('data:image/') ? '#fff' : colors.primary }]}>
+                📸 {lang === 'tr' ? 'Fotoğraf Yükle' : 'Upload Photo'}
+              </Text>
+            </TouchableOpacity>
+
+            <Text style={styles.avatarHint}>
+              {lang === 'tr' ? 'Veya bir emoji avatar seçin:' : 'Or select an emoji avatar:'}
+            </Text>
             
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.avatarPicker}>
               {AVATAR_OPTIONS.map(emoji => (
@@ -330,14 +331,14 @@ const getStyles = (colors: any) => StyleSheet.create({
   backBtnText: { fontSize: 36, color: colors.primary, lineHeight: 40 },
   headerTitle: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
   content: { padding: SPACING.xl },
-  avatarContainer: { alignItems: 'center', paddingVertical: SPACING.xxl },
+  avatarContainer: { alignItems: 'center', paddingVertical: SPACING.md },
   avatarCircle: {
-    width: 80, height: 80, borderRadius: 40,
+    width: 90, height: 90, borderRadius: 45,
     backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
     marginBottom: SPACING.sm,
   },
-  avatarLetter: { fontSize: 40 },
-  avatarHint: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textMuted, marginBottom: SPACING.md },
+  avatarLetter: { fontSize: 44 },
+  avatarHint: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.textMuted, marginTop: SPACING.lg, marginBottom: SPACING.xs },
   avatarPicker: { flexDirection: 'row', paddingVertical: SPACING.sm },
   emojiBtn: {
     width: 44, height: 44, borderRadius: 22,
@@ -346,18 +347,19 @@ const getStyles = (colors: any) => StyleSheet.create({
   },
   emojiBtnActive: { borderColor: colors.primary, backgroundColor: colors.primary + '22' },
   emojiText: { fontSize: 24 },
-  fieldGroup: { marginBottom: SPACING.xxl },
-  label: { fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightSemiBold, color: colors.textSecondary, marginBottom: SPACING.sm, textTransform: 'uppercase', letterSpacing: 0.5 },
+  fieldGroup: { marginBottom: SPACING.lg },
+  label: { fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightSemiBold, color: colors.textSecondary, marginBottom: SPACING.xs, textTransform: 'uppercase', letterSpacing: 0.5 },
   input: {
     backgroundColor: colors.surface, borderRadius: RADIUS.md,
-    padding: SPACING.lg, color: colors.textPrimary, fontSize: TYPOGRAPHY.fontSizeMd,
+    paddingVertical: 10, paddingHorizontal: 14, color: colors.textPrimary, fontSize: TYPOGRAPHY.fontSizeMd,
     borderWidth: 1, borderColor: colors.surfaceBorder,
   },
   saveButton: {
     backgroundColor: colors.primary, borderRadius: RADIUS.lg,
-    padding: SPACING.xl, alignItems: 'center',
+    padding: SPACING.lg, alignItems: 'center',
     shadowColor: colors.primary, shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4, shadowRadius: 8, elevation: 6,
+    marginTop: SPACING.md,
   },
   saveButtonDisabled: { opacity: 0.6 },
   saveButtonText: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightBold, color: '#fff' },
@@ -379,7 +381,7 @@ const getStyles = (colors: any) => StyleSheet.create({
     padding: SPACING.md,
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    marginTop: SPACING.sm,
+    marginTop: SPACING.xs,
     alignItems: 'center',
   },
   bmiText: {
@@ -397,13 +399,13 @@ const getStyles = (colors: any) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.surfaceBorder,
     borderRadius: RADIUS.md,
-    paddingVertical: SPACING.md,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   genderBtnActive: {
     borderColor: colors.primary,
-    backgroundColor: colors.primary + '18',
+    backgroundColor: colors.primary,
   },
   genderBtnText: {
     fontSize: 13,
@@ -411,15 +413,16 @@ const getStyles = (colors: any) => StyleSheet.create({
     color: colors.textSecondary,
   },
   genderBtnTextActive: {
-    color: colors.primary,
+    color: '#ffffff',
   },
   customPhotoBtn: {
     backgroundColor: colors.primary + '15',
     borderColor: colors.primary + '40',
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.full,
+    marginTop: SPACING.sm,
   },
   customPhotoBtnActive: {
     backgroundColor: colors.primary,

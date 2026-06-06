@@ -320,11 +320,11 @@ const getStyles = (colors: any) => StyleSheet.create({
   backBtnText: { fontSize: TYPOGRAPHY.fontSizeLg, color: colors.primary },
   headerTitle: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
   scroll: { flex: 1 },
-  scrollContent: { padding: SPACING.xl, gap: SPACING.xl },
+  scrollContent: { padding: SPACING.xl, gap: SPACING.lg, paddingBottom: 60 },
   fieldGroup: {},
   label: {
     fontSize: TYPOGRAPHY.fontSizeSm, fontWeight: TYPOGRAPHY.fontWeightSemiBold,
-    color: colors.textSecondary, marginBottom: SPACING.sm,
+    color: colors.textSecondary, marginBottom: SPACING.xs,
     textTransform: 'uppercase', letterSpacing: 0.5,
   },
   avatarPicker: { flexDirection: 'row', paddingVertical: SPACING.sm },
@@ -337,7 +337,7 @@ const getStyles = (colors: any) => StyleSheet.create({
   emojiText: { fontSize: 24 },
   input: {
     backgroundColor: colors.surface, borderRadius: RADIUS.md,
-    padding: SPACING.lg, color: colors.textPrimary, fontSize: TYPOGRAPHY.fontSizeMd,
+    paddingVertical: 10, paddingHorizontal: 14, color: colors.textPrimary, fontSize: TYPOGRAPHY.fontSizeMd,
     borderWidth: 1, borderColor: colors.surfaceBorder,
   },
   previewCard: {
@@ -360,7 +360,7 @@ const getStyles = (colors: any) => StyleSheet.create({
     padding: SPACING.md,
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    marginTop: SPACING.sm,
+    marginTop: SPACING.xs,
     alignItems: 'center',
   },
   bmiText: {
@@ -378,13 +378,13 @@ const getStyles = (colors: any) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.surfaceBorder,
     borderRadius: RADIUS.md,
-    paddingVertical: SPACING.md,
+    paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   genderBtnActive: {
     borderColor: colors.primary,
-    backgroundColor: colors.primary + '18',
+    backgroundColor: colors.primary,
   },
   genderBtnText: {
     fontSize: 13,
@@ -392,15 +392,15 @@ const getStyles = (colors: any) => StyleSheet.create({
     color: colors.textSecondary,
   },
   genderBtnTextActive: {
-    color: colors.primary,
+    color: '#ffffff',
   },
   customPhotoBtn: {
     backgroundColor: colors.primary + '15',
     borderColor: colors.primary + '40',
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.full,
   },
   customPhotoBtnActive: {
     backgroundColor: colors.primary,
