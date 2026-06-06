@@ -1,0 +1,30 @@
+name: Yeni Eczane Senkronizasyonu
+
+on:
+  schedule:
+    # 3 günde bir gece yarısı yeni eczaneleri senkronize eder
+    - cron: '0 0 */3 * *'
+  workflow_dispatch: # Manuel tetikleme desteği
+
+jobs:
+  sync:
+    name: Yeni Eczaneleri Senkronize Et
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Kodu Klonla
+        uses: actions/checkout@v4
+
+      - name: Node.js Kurulumu
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Bağımlılıkları Yükle
+        run: npm ci || npm install --no-audit
+
+      - name: Yeni Eczaneleri Senkronize Et
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          EXPO_PUBLIC_NOSYAPI_KEY: ${{ secrets.EXPO_PUBLIC_NOSYAPI_KEY }}
+        run: node scripts/sync-pharmacies.js --recent

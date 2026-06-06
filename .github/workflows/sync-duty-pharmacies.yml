@@ -1,4 +1,4 @@
-name: Eczane Verileri Senkronizasyonu
+name: Nöbetçi Eczane Senkronizasyonu
 
 on:
   schedule:
@@ -6,13 +6,11 @@ on:
     - cron: '15 6 * * *'
     # Türkiye Saati ile Öğleden Sonra 14:00'te çalışır (11:00 UTC)
     - cron: '0 11 * * *'
-    # 3 günde bir gece yarısı yeni eczaneleri senkronize eder
-    - cron: '0 0 */3 * *'
   workflow_dispatch: # Manuel tetikleme desteği
 
 jobs:
   sync:
-    name: Veritabanı Senkronizasyonu
+    name: Nöbetçi Eczaneleri Senkronize Et
     runs-on: ubuntu-latest
 
     steps:
@@ -27,17 +25,9 @@ jobs:
       - name: Bağımlılıkları Yükle
         run: npm ci || npm install --no-audit
 
-      - name: Nöbetçi Eczaneleri Senkronize Et (Günde 2 Kez)
-        if: github.event.schedule == '15 6 * * *' || github.event.schedule == '0 11 * * *' || github.event_name == 'workflow_dispatch'
+      - name: Nöbetçileri Senkronize Et
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           EXPO_PUBLIC_COLLECTAPI_KEY: ${{ secrets.EXPO_PUBLIC_COLLECTAPI_KEY }}
           CLOUDFLARE_PROXY_URL: ${{ secrets.CLOUDFLARE_PROXY_URL }}
         run: node scripts/sync-pharmacies.js --duty
-
-      - name: Yeni Eczaneleri Senkronize Et (3 Günde 1 Kez)
-        if: github.event.schedule == '0 0 */3 * *' || github.event_name == 'workflow_dispatch'
-        env:
-          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-          EXPO_PUBLIC_NOSYAPI_KEY: ${{ secrets.EXPO_PUBLIC_NOSYAPI_KEY }}
-        run: node scripts/sync-pharmacies.js --recent
