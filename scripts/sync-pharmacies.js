@@ -53,10 +53,10 @@ try {
   // Hata durumunda sessiz kal
 }
 
-// 2. Çevre Değişkenleri / API Anahtarları
 const COLLECTAPI_KEY = process.env.EXPO_PUBLIC_COLLECTAPI_KEY || '';
 const NOSYAPI_KEY = process.env.EXPO_PUBLIC_NOSYAPI_KEY || '';
 const NOSYAPI_BASE_URL = 'https://www.nosyapi.com/apiv2/service';
+const CLOUDFLARE_PROXY_URL = process.env.CLOUDFLARE_PROXY_URL || '';
 
 /** Türkçe karakterleri İngilizce karşılıklarıyla değiştirip URL uyumlu hale getirir */
 const toSlug = (text) => {
@@ -80,7 +80,11 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 /** HTML Scraper: eczaneler.gen.tr sitesinden ildeki nöbetçi eczaneleri çeker */
 async function scrapeDutyPharmaciesFromWeb(city) {
   const citySlug = toSlug(city);
-  const url = `https://www.eczaneler.gen.tr/nobetci-${citySlug}`;
+  const targetUrl = `https://www.eczaneler.gen.tr/nobetci-${citySlug}`;
+  
+  const url = CLOUDFLARE_PROXY_URL 
+    ? `${CLOUDFLARE_PROXY_URL}?url=${encodeURIComponent(targetUrl)}`
+    : targetUrl;
   
   const response = await fetch(url, {
     headers: {

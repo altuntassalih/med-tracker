@@ -32,6 +32,7 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           EXPO_PUBLIC_COLLECTAPI_KEY: ${{ secrets.EXPO_PUBLIC_COLLECTAPI_KEY }}
+          CLOUDFLARE_PROXY_URL: ${{ secrets.CLOUDFLARE_PROXY_URL }}
         run: node scripts/sync-pharmacies.js --duty
 
       - name: Yeni Eczaneleri Senkronize Et (3 Günde 1 Kez)
