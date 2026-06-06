@@ -50,7 +50,7 @@ try {
 }
 
 /** Türkçe karakterleri İngilizce karşılıklarıyla değiştirip URL uyumlu hale getirir */
-const toSlug = (text: string) => {
+const toSlug = (text) => {
   return text
     .toLowerCase()
     .replace(/ğ/g, 'g')

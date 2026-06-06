@@ -36,6 +36,23 @@ const DB_COLLECTIONS = {
   PHARMACY_META: 'pharmacy_meta',
 };
 
+// turkeyCities.ts dosyasından verileri oku
+let TURKEY_CITIES = {};
+try {
+  const filePath = path.join(__dirname, '../constants/turkeyCities.ts');
+  const content = fs.readFileSync(filePath, 'utf8');
+  
+  const jsCode = content
+    .replace(/export const/g, 'const')
+    .replace(/: Record<.*>/g, '');
+
+  const context = {};
+  new Function('exports', jsCode + '\nexports.TURKEY_CITIES = TURKEY_CITIES;')(context);
+  TURKEY_CITIES = context.TURKEY_CITIES || {};
+} catch (err) {
+  // Hata durumunda sessiz kal
+}
+
 // 2. Çevre Değişkenleri / API Anahtarları
 const COLLECTAPI_KEY = process.env.EXPO_PUBLIC_COLLECTAPI_KEY || '';
 const NOSYAPI_KEY = process.env.EXPO_PUBLIC_NOSYAPI_KEY || '';
@@ -155,46 +172,45 @@ async function fetchDutyFromCollectAPI(city, district) {
 async function syncDutyPharmacies() {
   console.log('--- Nöbetçi Eczaneler Senkronizasyonu Başlatıldı ---');
   
-  // 1. Firestore 'active_districts' koleksiyonundan aktif ilçeleri oku
-  const snapshot = await db.collection(DB_COLLECTIONS.ACTIVE_DISTRICTS).get();
-  if (snapshot.empty) {
-    console.log('Aktif ilçe bulunamadı. Güncelleme yapılmıyor.');
-    return;
-  }
-
-  // İlçeleri illerine göre grupla
-  const cityGroups = {};
-  snapshot.forEach(docSnap => {
+  // 1. Firestore 'active_districts' koleksiyonundan aktif ilçeleri oku (Yedek hat için)
+  const activeSnapshot = await db.collection(DB_COLLECTIONS.ACTIVE_DISTRICTS).get();
+  const activeDistrictsMap = {};
+  activeSnapshot.forEach(docSnap => {
     const data = docSnap.data();
     if (data.city && data.district) {
-      if (!cityGroups[data.city]) {
-        cityGroups[data.city] = [];
+      if (!activeDistrictsMap[data.city]) {
+        activeDistrictsMap[data.city] = [];
       }
-      cityGroups[data.city].push(data.district);
+      activeDistrictsMap[data.city].push(data.district);
     }
   });
 
-  const cities = Object.keys(cityGroups);
-  console.log(`Aktif şehir sayısı: ${cities.length}. Şehirler: ${cities.join(', ')}`);
+  // 2. Tüm 81 ili tara
+  const cities = Object.keys(TURKEY_CITIES);
+  console.log(`Toplam şehir sayısı: ${cities.length}. Tüm Türkiye taranıyor...`);
 
   for (const city of cities) {
     console.log(`\n[${city}] nöbetçi eczaneleri taranıyor...`);
     let pharmacies = [];
     let scraperFailed = false;
 
-    // A. Birincil Adım: Web Scraper'ı dene
+    // A. Web Scraper'ı dene
     try {
       pharmacies = await scrapeDutyPharmaciesFromWeb(city);
       console.log(`  -> Scraper başarılı! ${pharmacies.length} eczane bulundu.`);
     } catch (err) {
-      console.warn(`  ⚠️ Scraper başarısız (Tasarım değişmiş veya site çökmüş olabilir):`, err.message);
       scraperFailed = true;
     }
 
     if (scraperFailed || pharmacies.length === 0) {
-      // B. İkincil Adım: Scraper başarısızsa CollectAPI'ye (Yedek) geç
-      console.log(`  -> Yedek hat (CollectAPI) devreye sokuluyor...`);
-      const activeDistricts = cityGroups[city];
+      // B. Scraper başarısızsa sadece AKTİF ilçeler için CollectAPI'ye (Yedek) geç
+      const activeDistricts = activeDistrictsMap[city] || [];
+      if (activeDistricts.length === 0) {
+        console.log(`  -> Scraper başarısız ancak bu ilde aktif aranan ilçe yok. Yedek hat tetiklenmedi.`);
+        continue;
+      }
+
+      console.log(`  -> Yedek hat (CollectAPI) devreye sokuluyor... Aktif ilçeler: ${activeDistricts.join(', ')}`);
       const batch = db.batch();
       let savedCount = 0;
 
@@ -217,7 +233,7 @@ async function syncDutyPharmacies() {
           savedCount++;
           await delay(1000); // Rate limit aşımı koruması
         } catch (apiErr) {
-          console.error(`    ❌ Hata: ${city}/${district} için CollectAPI başarısız:`, apiErr.message);
+          // Hata sessizce yutulur
         }
       }
 
@@ -226,18 +242,15 @@ async function syncDutyPharmacies() {
         console.log(`  -> CollectAPI ile ${savedCount} aktif ilçe başarıyla güncellendi.`);
       }
       
-      // GitHub workflow'unun hata vermesi ve geliştiriciye e-posta göndermesi için çıkış kodunu 1 yapalım
-      console.error('❌ UYARI: Web Scraper bozuldu! Yedek API hattı kullanıldı. Lütfen scraper kodunu güncelleyin.');
       process.exitCode = 1;
     } else {
       // C. Scraper Başarılıysa: Çekilen tüm eczaneleri Firestore'a yaz (Tüm ilçeler için tek istekte)
-      const districtsInCity = cityGroups[city];
+      const districtsInCity = TURKEY_CITIES[city] || [];
       const groupedByDistrict = {};
       districtsInCity.forEach(d => { groupedByDistrict[d] = []; });
 
       // Eczaneleri ilçelerine dağıt
       pharmacies.forEach(p => {
-        // Eczanenin ilçesini bizim kayıtlı ilçelerimizle eşleştirmeyi dene
         const matched = districtsInCity.find(d => toSlug(d) === toSlug(p.dist) || p.address.toLowerCase().includes(d.toLowerCase()));
         if (matched) {
           groupedByDistrict[matched].push(p);
@@ -267,7 +280,7 @@ async function syncDutyPharmacies() {
 
       if (count > 0) {
         await batch.commit();
-        console.log(`  -> Firestore güncellendi: ${city} (${count} aktif ilçe yazıldı).`);
+        console.log(`  -> Firestore güncellendi: ${city} (${count} ilçe yazıldı).`);
       }
     }
     

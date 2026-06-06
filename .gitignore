@@ -44,3 +44,4 @@ app-example
 # @generated expo-cli sync-2b81b286409207a5da26e14c78851eb69d1036edrs
 /ios
 /android
+service-account.json
