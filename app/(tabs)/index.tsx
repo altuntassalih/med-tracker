@@ -403,7 +403,76 @@ export default function HomeScreen() {
 
       if (!isForDay) return;
 
+      // Stock simulation for future dates
+      const isStockAvailableForSlot: Record<string, boolean> = {};
+      if (targetDateStr > todayStr && med.totalQuantity !== undefined && med.type !== 'vaccine') {
+        const takenCount = logs.filter((l) => l.medicationId === med.id && l.status === STATUS_TAKEN).length;
+        const dosageVal = parseFloat(med.dosage || '1') || 1;
+        let simulatedStock = Math.max(0, med.totalQuantity - (takenCount * dosageVal));
+
+        const current = new Date(todayStr + 'T00:00:00');
+        const target = new Date(targetDateStr + 'T00:00:00');
+        const datesList: string[] = [];
+        let safeguard = 0;
+        while (current <= target && safeguard < 366) {
+          datesList.push(getLocalDateString(current));
+          current.setDate(current.getDate() + 1);
+          safeguard++;
+        }
+
+        datesList.forEach((dateStr) => {
+          let isScheduled = false;
+          if (med.startDate <= dateStr && (!med.endDate || med.endDate >= dateStr)) {
+            if (med.intervalDays && med.intervalDays > 1) {
+              const start = new Date(med.startDate + 'T00:00:00');
+              const curr = new Date(dateStr + 'T00:00:00');
+              const daysDiff = Math.floor((curr.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+              if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) {
+                isScheduled = true;
+              }
+            } else {
+              isScheduled = true;
+            }
+          }
+
+          if (!isScheduled) return;
+
+          const sortedTimes = [...(med.times || [])].sort((a, b) => {
+            const [ha, ma] = a.split(':').map(Number);
+            const [hb, mb] = b.split(':').map(Number);
+            return (ha * 60 + ma) - (hb * 60 + mb);
+          });
+
+          sortedTimes.forEach((timeStr) => {
+            if (dateStr === todayStr) {
+              const log = logs.find((l) => 
+                l.medicationId === med.id && 
+                l.expectedTime === timeStr && 
+                (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr)))
+              );
+              const isAlreadyTaken = log && log.status === STATUS_TAKEN;
+              if (!isAlreadyTaken) {
+                simulatedStock -= dosageVal;
+              }
+            } else if (dateStr === targetDateStr) {
+              if (simulatedStock >= dosageVal) {
+                isStockAvailableForSlot[timeStr] = true;
+                simulatedStock -= dosageVal;
+              } else {
+                isStockAvailableForSlot[timeStr] = false;
+              }
+            } else {
+              simulatedStock -= dosageVal;
+            }
+          });
+        });
+      }
+
       (med.times || []).forEach((time) => {
+        if (targetDateStr > todayStr && med.totalQuantity !== undefined && med.type !== 'vaccine' && isStockAvailableForSlot[time] === false) {
+          return;
+        }
+
         const [h, m] = time.split(':').map(Number);
         const timeMinutes = h * 60 + m;
 

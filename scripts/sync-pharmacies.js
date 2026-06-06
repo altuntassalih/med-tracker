@@ -100,7 +100,14 @@ async function scrapeDutyPharmaciesFromWeb(city) {
   const $ = cheerio.load(html);
   const pharmacies = [];
 
-  $('td.border-bottom').each((i, el) => {
+  // Sadece aktif olan tab paneli (bugünün nöbetçileri) içindeki eczaneleri seç
+  let container = $('.tab-pane.active');
+  if (container.length === 0) {
+    // Eğer active class'lı tab bulunamazsa fallback olarak tüm sayfayı tara
+    container = $('body');
+  }
+
+  container.find('td.border-bottom').each((i, el) => {
     const name = $(el).find('span.isim').text().trim().toUpperCase().replace(/İ/g, 'İ').replace(/I/g, 'I');
     if (!name) return;
 

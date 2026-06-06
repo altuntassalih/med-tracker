@@ -4,7 +4,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { router } from 'expo-router';
 import { auth } from '../../services/firebase';
 import { useStore } from '../../store/useStore';
-import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
+import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, APP_VERSION } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
 import { scheduleEndOfDayMissedNotification, scheduleTestNotification } from '../../services/notifications';
 
@@ -21,7 +21,6 @@ export default function SettingsScreen() {
   } = useStore();
   const [showQuietPicker, setShowQuietPicker] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
-  const [showChangelogModal, setShowChangelogModal] = useState(false);
   const [editingWhich, setEditingWhich] = useState<'start' | 'end'>('start');
 
   const colors = getThemeColors(theme);
@@ -238,10 +237,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t(lang, 'settings.appSection')}</Text>
           <View style={styles.card}>
-            <SettingRow colors={colors} icon="ℹ️" label={t(lang, 'settings.appVersion')} value="1.0.0" />
-
-            <Divider colors={colors} />
-            <SettingRow colors={colors} icon="📝" label={lang === 'tr' ? 'Güncelleme Notları' : 'Changelog'} isLink onPress={() => setShowChangelogModal(true)} />
+            <SettingRow colors={colors} icon="ℹ️" label={t(lang, 'settings.appVersion')} value={APP_VERSION} />
             <Divider colors={colors} />
             <SettingRow colors={colors} icon="✉️" label={lang === 'tr' ? 'Bize Ulaşın / Öneri' : 'Contact Us / Feedback'} isLink onPress={() => Linking.openURL('mailto:salihaltuntas@outlook.com')} />
             <Divider colors={colors} />
@@ -261,7 +257,7 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.versionBox}>
-          <Text style={styles.versionText}>MedTracker v1.0.0</Text>
+          <Text style={styles.versionText}>{`MedTracker v${APP_VERSION}`}</Text>
           <Text style={styles.versionSub}>{t(lang, 'settings.wish')}</Text>
         </View>
 
@@ -396,41 +392,6 @@ export default function SettingsScreen() {
           </View>
         </Modal>
 
-        {/* Changelog Modal */}
-        <Modal transparent animationType="slide" visible={showChangelogModal} onRequestClose={() => setShowChangelogModal(false)}>
-          <View style={styles.pickerOverlay}>
-            <View style={[styles.pickerSheet, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-              <View style={styles.pickerHeader}>
-                <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
-                  <Text style={styles.pickerIcon}>📋</Text>
-                </View>
-                <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{lang === 'tr' ? 'Yenilikler (v1.0.0)' : 'What\'s New (v1.0.0)'}</Text>
-              </View>
-              <ScrollView style={styles.pickerBodyScroll} showsVerticalScrollIndicator={false}>
-                <Text style={[styles.privacyText, { color: colors.textSecondary }]}>
-                  {lang === 'tr' ? (
-                    "🎉 Yeni Sürümdeki Harika Özellikler:\n\n" +
-                    "• 🤖 Gemini AI Desteği Eklendi: Artık ilaçlarınızla ilgili yapay zekaya anlık sorular sorup akıllı öneriler ve etkileşim analizleri alabilirsiniz.\n" +
-                    "• ⏱️ Zamanlama İyileştirmeleri: Bildirimler tam ilaç vaktinden 5 dakika önce size hatırlatmak üzere otomatik kurulur.\n" +
-                    "• 💤 Akıllı Sessiz Saatler: Uyku vaktinize denk gelen ilaç bildirimlerinizi dilediğiniz gibi sessize alabilirsiniz.\n" +
-                    "• 🌐 Tam Çoklu Dil Desteği (TR/EN) ve Canlı Dinamik Tema (Dark/Light Mode) ile pürüzsüz görünüm!\n" +
-                    "• 👥 Ortak Aile Profilleri eklendi.\n"
-                  ) : (
-                    "🎉 Exciting Features in This Release:\n\n" +
-                    "• 🤖 Gemini AI Integration: Instantly ask AI for medication interaction analysis and smart suggestions.\n" +
-                    "• ⏱️ Improved Timing: Accurate push notifications scheduled exactly 5 minutes before your time.\n" +
-                    "• 💤 Smart Quiet Hours: Select periods where your medication alerts remain completely silent.\n" +
-                    "• 🌐 Full Multilingual Support (TR/EN) alongside Dynamic Themes (Dark/Light).\n" +
-                    "• 👥 Multiple Family Profiles added.\n"
-                  )}
-                </Text>
-              </ScrollView>
-              <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => setShowChangelogModal(false)}>
-                <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
       </ScrollView>
     </View>
   );
