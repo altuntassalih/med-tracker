@@ -25,12 +25,10 @@ jobs:
           node-version: '20'
 
       - name: Bağımlılıkları Yükle
-        working-directory: ./med-tracker
         run: npm ci || npm install --no-audit
 
       - name: Nöbetçi Eczaneleri Senkronize Et (Günde 2 Kez)
         if: github.event.schedule == '15 6 * * *' || github.event.schedule == '0 11 * * *' || github.event_name == 'workflow_dispatch'
-        working-directory: ./med-tracker
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           EXPO_PUBLIC_COLLECTAPI_KEY: ${{ secrets.EXPO_PUBLIC_COLLECTAPI_KEY }}
@@ -38,7 +36,6 @@ jobs:
 
       - name: Yeni Eczaneleri Senkronize Et (3 Günde 1 Kez)
         if: github.event.schedule == '0 0 */3 * *' || github.event_name == 'workflow_dispatch'
-        working-directory: ./med-tracker
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           EXPO_PUBLIC_NOSYAPI_KEY: ${{ secrets.EXPO_PUBLIC_NOSYAPI_KEY }}
