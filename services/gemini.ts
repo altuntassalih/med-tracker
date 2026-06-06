@@ -212,10 +212,13 @@ export const identifyMedicationByBarcode = async (
   signal?: AbortSignal,
   rejectedNames?: string[]
 ): Promise<BarcodeMedicationResult> => {
-  // 1. Önce internetten ismi kazımayı dene
-  let scrapedName = await fetchFromBarkodOku(barcode, signal);
-  if (!scrapedName) {
-    scrapedName = await fetchFromYahoo(barcode, signal);
+  // 1. Önce internetten ismi kazımayı dene (Eğer daha önce reddedilmiş isim yoksa)
+  let scrapedName = null;
+  if (!rejectedNames || rejectedNames.length === 0) {
+    scrapedName = await fetchFromBarkodOku(barcode, signal);
+    if (!scrapedName) {
+      scrapedName = await fetchFromYahoo(barcode, signal);
+    }
   }
 
   let rejectPrompt = '';
