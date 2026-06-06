@@ -6,6 +6,9 @@ on:
     - cron: '0 0 */3 * *'
   workflow_dispatch: # Manuel tetikleme desteği
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   sync:
     name: Yeni Eczaneleri Senkronize Et
