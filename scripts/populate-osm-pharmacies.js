@@ -72,22 +72,41 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 async function fetchPharmaciesFromOSM(city) {
   const query = `[out:json][timeout:90];area["name"="${city}"]["admin_level"="4"]->.a;(node["amenity"="pharmacy"](area.a);way["amenity"="pharmacy"](area.a););out body center;`;
   const url = 'https://overpass-api.de/api/interpreter';
+  let retries = 5;
+  let delayTime = 5000;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    body: 'data=' + encodeURIComponent(query),
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  while (retries > 0) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query),
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      });
+
+      if (response.status === 429) {
+        await delay(delayTime);
+        retries--;
+        delayTime *= 2;
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`OSM HTTP: ${response.status}`);
+      }
+
+      const json = await response.json();
+      return json.elements || [];
+    } catch (err) {
+      if (retries === 1) throw err;
+      await delay(delayTime);
+      retries--;
+      delayTime *= 2;
     }
-  });
-
-  if (!response.ok) {
-    throw new Error(`OSM HTTP hata: ${response.status}`);
   }
-
-  const json = await response.json();
-  return json.elements || [];
+  return [];
 }
 
 /** Çekilen OSM elementlerini parse eder ve ilçelerine göre gruplayıp Firestore'a kaydeder */
