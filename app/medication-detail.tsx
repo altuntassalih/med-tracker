@@ -130,10 +130,9 @@ export default function MedicationDetailScreen() {
   };
 
   const getTranslatedUnit = (u: string) => {
-    if (u === 'tablet' || u === 'kapsül' || u === 'damla') {
-      return t(lang, `medicationOptions.units.${u}`);
-    }
-    return u;
+    const translationKey = `medicationOptions.units.${u}`;
+    const translated = t(lang, translationKey);
+    return translated === translationKey ? u : translated;
   };
 
   const getTranslatedTypeLabel = (value: string) => {
@@ -196,7 +195,9 @@ export default function MedicationDetailScreen() {
   const handleSlotPress = async (dateStr: string, time: string, currentStatus: string) => {
     if (!medication || !activeProfileId) return;
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateString();
+    if (dateStr > todayStr) return;
+
     const existingLog = medicationLogs.find(
       l => l.medicationId === medication.id && 
            l.expectedTime === time && 
@@ -204,19 +205,30 @@ export default function MedicationDetailScreen() {
     );
 
     try {
-      if (currentStatus === 'none') {
-        const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
-          profileId: activeProfileId,
-          medicationId: medication.id,
-          expectedTime: time,
-          takenAt: new Date().toISOString(),
-          scheduledDate: dateStr,
-          status: 'taken',
-        };
-        addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
-        await addMedicationLog(logData);
+      if (currentStatus === 'none' || currentStatus === 'missed') {
+        if (existingLog) {
+          updateMedicationLogState(existingLog.id, { status: 'taken', takenAt: new Date().toISOString() });
+          await updateMedicationLog(existingLog.id, { status: 'taken', takenAt: new Date().toISOString() });
+        } else {
+          const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
+            profileId: activeProfileId,
+            medicationId: medication.id,
+            expectedTime: time,
+            takenAt: new Date().toISOString(),
+            scheduledDate: dateStr,
+            status: 'taken',
+          };
+          const tempId = 'temp_' + Date.now();
+          addMedicationLogState({ id: tempId, ...logData });
+          try {
+            const newLog = await addMedicationLog(logData);
+            updateMedicationLogState(tempId, { id: newLog.id });
+          } catch (err) {
+            // fail silently or keep local tempId
+          }
+        }
 
-        // Kritik stok uyarısı kontrolü
+        // Klinik stok uyarısı kontrolü
         if (medication.totalQuantity !== undefined) {
           const updatedState = useStore.getState();
           const updatedLogs = updatedState.medicationLogs || [];
@@ -232,34 +244,26 @@ export default function MedicationDetailScreen() {
           }
         }
 
-        // Periyodik ilaç kontrolü
-        const isIntervalDrug = medication.intervalDays && medication.intervalDays > 1 && medication.intervalDays !== 7;
-        if (isIntervalDrug) {
-          // Bildirim: alım sonrası sonraki tarihi zamanla
-          rescheduleIntervalNotificationAfterTake(
-            medication.id, medication.name, medication.dosage, time,
-            lang, medication.intervalDays, medication.startDate
-          );
+        // Bildirim: alım sonrası bugünün kalan bildirimini iptal et ve sonrakileri zamanla
+        rescheduleIntervalNotificationAfterTake(
+          medication.id, medication.name, medication.dosage, time,
+          lang, medication.intervalDays || 1, medication.startDate
+        );
 
-          // Periyot sorusu: Kullanıcı DÜN'ü (geçmiş geçerli günü) işaretlediyse sor
-          // Bugünü işaretlediyse sormaya gerek yok (zaten doğru gün)
-          const yesterdayStr = (() => {
-            const d = new Date();
-            d.setDate(d.getDate() - 1);
-            d.setHours(0, 0, 0, 0);
-            return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
-          })();
-          if (dateStr === yesterdayStr) {
+        // Periyot sorusu: Sadece alım BUGÜN ise ve bugün o ilacın alım periyodunda değilse sor
+        const isIntervalDrug = medication.intervalDays && medication.intervalDays > 1 && medication.intervalDays !== 7;
+        if (isIntervalDrug && dateStr === todayStr) {
+          const start = new Date(medication.startDate + 'T00:00:00');
+          const target = new Date(todayStr + 'T00:00:00');
+          const daysDiff = Math.floor((target.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+          const isAlignedToday = daysDiff >= 0 && daysDiff % medication.intervalDays === 0;
+
+          if (!isAlignedToday) {
             setTimeout(() => askPeriodResetFromDetail(medication), 600);
           }
         }
 
       } else if (currentStatus === 'taken') {
-        if (existingLog) {
-          updateMedicationLogState(existingLog.id, { status: 'missed' });
-          await updateMedicationLog(existingLog.id, { status: 'missed' });
-        }
-      } else if (currentStatus === 'missed') {
         if (existingLog) {
           updateMedicationLogState(existingLog.id, { status: 'postponed' });
           await updateMedicationLog(existingLog.id, { status: 'postponed' });
@@ -268,6 +272,13 @@ export default function MedicationDetailScreen() {
         if (existingLog) {
           deleteMedicationLogState(existingLog.id);
           await deleteMedicationLog(existingLog.id);
+          
+          await cancelMedicationNotifications(medication.id);
+          for (const t of (medication.times || [])) {
+            await scheduleMedicationNotification(
+              medication.id, medication.name, medication.dosage, t, lang, medication.intervalDays || 1, medication.startDate
+            );
+          }
         }
       }
       checkAndRefreshEndOfDayNotification(lang);

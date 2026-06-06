@@ -67,12 +67,11 @@ export const getMedicationSuggestions = async (name: string, lang: LanguageCode)
     
     // Her bir yeni ismi küresel kütüphaneye async olarak ekle
     results.forEach((name: string) => {
-      addGlobalMedication(name).catch(e => console.log('Global save error:', e));
+      addGlobalMedication(name).catch(() => {});
     });
 
     return results;
   } catch (err) {
-    console.error('Gemini Suggest Error:', err);
     return [];
   }
 };

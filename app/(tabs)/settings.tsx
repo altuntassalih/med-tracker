@@ -16,6 +16,8 @@ export default function SettingsScreen() {
     setQuietHoursStart, setQuietHoursEnd, setQuietHoursStartMinute, setQuietHoursEndMinute,
     setQuietHoursEnabled, setNotificationsEnabled,
     autoMarkMissedAsTaken, setAutoMarkMissedAsTaken,
+    showPastWater, showPastSleep, showPastWeight, showPastMood,
+    setShowPastWater, setShowPastSleep, setShowPastWeight, setShowPastMood,
   } = useStore();
   const [showQuietPicker, setShowQuietPicker] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
@@ -189,6 +191,48 @@ export default function SettingsScreen() {
         </View>
 
 
+
+        {/* Geçmiş Sağlık Verileri Gösterimi Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t(lang, 'settings.pastHealthSection')}</Text>
+          <View style={styles.card}>
+            <SettingRow
+              colors={colors}
+              icon="💧"
+              label={t(lang, 'settings.pastHealthWater')}
+              hasSwitch
+              switchValue={showPastWater}
+              onSwitchChange={setShowPastWater}
+            />
+            <Divider colors={colors} />
+            <SettingRow
+              colors={colors}
+              icon="😴"
+              label={t(lang, 'settings.pastHealthSleep')}
+              hasSwitch
+              switchValue={showPastSleep}
+              onSwitchChange={setShowPastSleep}
+            />
+            <Divider colors={colors} />
+            <SettingRow
+              colors={colors}
+              icon="⚖️"
+              label={t(lang, 'settings.pastHealthWeight')}
+              hasSwitch
+              switchValue={showPastWeight}
+              onSwitchChange={setShowPastWeight}
+            />
+            <Divider colors={colors} />
+            <SettingRow
+              colors={colors}
+              icon="🎭"
+              label={t(lang, 'settings.pastHealthMood')}
+              hasSwitch
+              switchValue={showPastMood}
+              onSwitchChange={setShowPastMood}
+            />
+          </View>
+        </View>
 
         {/* Uygulama Section */}
         <View style={styles.section}>

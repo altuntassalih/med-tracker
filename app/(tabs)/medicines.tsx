@@ -58,7 +58,7 @@ export default function MedicinesScreen() {
               await deleteMedication(med.id);
               await cancelMedicationNotifications(med.id);
             } catch (err) {
-              console.log('Med deletion error:', err);
+              // Hata sessizce yutulur
             }
           },
         },
@@ -112,10 +112,9 @@ export default function MedicinesScreen() {
   };
 
   const getTranslatedUnit = (u: string) => {
-    if (u === 'tablet' || u === 'kapsül' || u === 'damla') {
-      return t(lang, `medicationOptions.units.${u}`);
-    }
-    return u;
+    const translationKey = `medicationOptions.units.${u}`;
+    const translated = t(lang, translationKey);
+    return translated === translationKey ? u : translated;
   };
 
   const toggleSelection = (id: string) => {
@@ -180,6 +179,22 @@ export default function MedicinesScreen() {
                 : analysisResult
                   ? (lang === 'tr' ? 'Son yapılan yapay zeka analizini modalda açar' : 'Opens the last AI analysis in a modal')
                   : t(lang, 'medicines.analyzeSubAll')}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.pharmacyButton}
+          onPress={() => router.push('/pharmacies')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.pharmacyButtonIcon}>🏥</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.pharmacyButtonText}>
+              {lang === 'tr' ? 'Nöbetçi / En Yakın Eczaneler' : 'Duty / Nearest Pharmacies'}
+            </Text>
+            <Text style={styles.pharmacyButtonSub}>
+              {lang === 'tr' ? 'Yakınınızdaki nöbetçi eczaneleri bulun ve yol tarifi alın' : 'Find duty pharmacies near you and get directions'}
             </Text>
           </View>
         </TouchableOpacity>
@@ -370,9 +385,9 @@ const getStyles = (colors: any) => StyleSheet.create({
   emptyText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, textAlign: 'center' },
   medicineCard: {
     backgroundColor: colors.surface, borderRadius: RADIUS.lg,
-    padding: SPACING.lg, marginBottom: SPACING.md,
+    padding: SPACING.md, marginBottom: SPACING.sm,
     borderWidth: 1, borderColor: colors.surfaceBorder,
-    gap: SPACING.md,
+    gap: SPACING.sm,
   },
   medicineCardSelected: {
     borderColor: colors.primary,
@@ -380,25 +395,25 @@ const getStyles = (colors: any) => StyleSheet.create({
   },
   medicineCardTop: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md },
   medicineIconBox: {
-    width: 48, height: 48, borderRadius: RADIUS.md,
+    width: 40, height: 40, borderRadius: RADIUS.sm,
     backgroundColor: colors.surfaceBorder, alignItems: 'center', justifyContent: 'center',
   },
-  medicineIcon: { fontSize: 24 },
+  medicineIcon: { fontSize: 20 },
   medicineInfo: { flex: 1 },
-  medicineName: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightSemiBold, color: colors.textPrimary },
+  medicineName: { fontSize: TYPOGRAPHY.fontSizeMd, fontWeight: TYPOGRAPHY.fontWeightSemiBold, color: colors.textPrimary },
   medicineDose: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, marginTop: 2 },
   deleteBtn: { padding: SPACING.xs },
-  deleteBtnText: { fontSize: 18 },
+  deleteBtnText: { fontSize: 16 },
   medicineTimesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs },
   timeTag: {
     backgroundColor: colors.primary + '22', borderRadius: RADIUS.full,
-    paddingHorizontal: SPACING.sm, paddingVertical: 4,
+    paddingHorizontal: SPACING.sm, paddingVertical: 3,
   },
   timeTagText: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightMedium },
   medicineNotes: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, fontStyle: 'italic' },
   detailBtn: {
     backgroundColor: colors.surfaceBorder + '88', borderRadius: RADIUS.md,
-    padding: SPACING.sm, alignItems: 'center',
+    padding: 6, alignItems: 'center',
   },
   detailBtnText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightMedium },
   fab: {
@@ -409,4 +424,28 @@ const getStyles = (colors: any) => StyleSheet.create({
     shadowOpacity: 0.5, shadowRadius: 12, elevation: 10,
   },
   fabIcon: { fontSize: 28, color: '#fff', lineHeight: 32 },
+  pharmacyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary + '12',
+    borderWidth: 1,
+    borderColor: colors.primary + '33',
+    borderRadius: RADIUS.xl,
+    padding: SPACING.lg,
+    marginBottom: SPACING.lg,
+    gap: SPACING.md,
+  },
+  pharmacyButtonIcon: {
+    fontSize: 28,
+  },
+  pharmacyButtonText: {
+    fontSize: TYPOGRAPHY.fontSizeMd,
+    fontWeight: TYPOGRAPHY.fontWeightBold,
+    color: colors.primaryLight,
+  },
+  pharmacyButtonSub: {
+    fontSize: TYPOGRAPHY.fontSizeXs,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
 });

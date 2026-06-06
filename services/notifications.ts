@@ -173,6 +173,59 @@ const getNextIntervalDate = (
  * NOT: 'calendar' tipi Android'de desteklenmez — "Trigger of type: calendar
  * is not supported on Android" hatasına yol açar ve bildirim hiç gelmez.
  */
+/**
+ * Bir ilacın startDate ve intervalDays değerine göre bugünden itibaren
+ * gelecek olan ilk N alım tarihini hesaplar.
+ * Eğer bir alım saati bugün henüz geçmediyse bugünü de dahil eder.
+ */
+const getNextNOccurrences = (
+  startDate: string,
+  intervalDays: number,
+  timeHour: number,
+  timeMinute: number,
+  count: number
+): Date[] => {
+  const occurrences: Date[] = [];
+  const start = new Date(startDate + 'T00:00:00');
+  const now = new Date();
+
+  // Bugünden başla ve gelecek tarihlere bak
+  let currentMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (currentMidnight < start) {
+    currentMidnight = new Date(start);
+  }
+
+  // Güvenlik sınırı: sonsuz döngüyü engellemek için maks 1000 gün ilerle
+  let daysLimit = 1000;
+  while (occurrences.length < count && daysLimit > 0) {
+    const daysSinceStart = Math.floor(
+      (currentMidnight.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    if (daysSinceStart >= 0 && daysSinceStart % intervalDays === 0) {
+      const occurrenceTime = new Date(currentMidnight);
+      occurrenceTime.setHours(timeHour, timeMinute, 0, 0);
+
+      // Gelecekte bir zaman mı?
+      if (occurrenceTime.getTime() > now.getTime()) {
+        occurrences.push(occurrenceTime);
+      }
+    }
+
+    // Sonraki güne geç
+    currentMidnight.setDate(currentMidnight.getDate() + 1);
+    daysLimit--;
+  }
+
+  return occurrences;
+};
+
+/**
+ * İlaç vakti için bildirim zamanlar.
+ *
+ * Sınırlı sayıda (5 adet) bir sonraki alım vaktini one-time trigger olarak zamanlar.
+ * Bu sayede "önceden alındı" olarak işaretlenen günlerin bildirimleri otomatik atlanabilir.
+ */
 export const scheduleMedicationNotification = async (
   medicationId: string,
   medicationName: string,
@@ -256,72 +309,44 @@ export const scheduleMedicationNotification = async (
       return 'vaccines_scheduled';
     }
 
-    // Bu ilacın bu vakti için BENZERSIZ identifier
-    const identifierStr = `med-${medicationId}-${time.replace(':', '')}`;
-
-    // Önce aynı kimlikli varsa iptal et
-    try { await Notifications.cancelScheduledNotificationAsync(identifierStr); } catch (_e) {}
-
     const body = lang === 'tr'
       ? (profileName ? `${profileName} için ` : '') + `${medicationName} (${dosage}) alma zamanı.`
       : `Time to take ${medicationName} (${dosage})` + (profileName ? ` for ${profileName}.` : '.');
 
-    // --- intervalDays 2 veya 3: Tek seferlik DATE trigger ---
-    if (intervalDays > 1 && intervalDays !== 7) {
-      const nextDate = getNextIntervalDate(startDate, intervalDays, triggerHour, triggerMinute);
-      await scheduleOneTimeNotification(identifierStr, title, body, nextDate, medicationId);
-      return identifierStr;
+    // Gelecekteki ilk 5 alım vakti için one-time bildirim zamanla
+    const occurrences = getNextNOccurrences(startDate, intervalDays, triggerHour, triggerMinute, 5);
+
+    for (const occurrenceDate of occurrences) {
+      const year = occurrenceDate.getFullYear();
+      const month = (occurrenceDate.getMonth() + 1).toString().padStart(2, '0');
+      const day = occurrenceDate.getDate().toString().padStart(2, '0');
+      const dateStr = `${year}-${month}-${day}`;
+
+      // Bu tarih için ilaç zaten alınmış mı kontrol et
+      const isTaken = state.medicationLogs?.some((l) =>
+        l.medicationId === medicationId &&
+        l.expectedTime === time &&
+        (l.scheduledDate === dateStr || (!l.scheduledDate && l.takenAt.startsWith(dateStr))) &&
+        l.status === 'taken'
+      );
+
+      if (isTaken) {
+        continue;
+      }
+
+      const dateIdentifier = `med-${medicationId}-${time.replace(':', '')}-${dateStr}`;
+      await scheduleOneTimeNotification(dateIdentifier, title, body, occurrenceDate, medicationId);
     }
 
-    let trigger: any;
-
-    if (intervalDays === 7) {
-      // Haftalık: startDate'den weekday hesapla
-      const startD = new Date(startDate + 'T12:00:00');
-      const jsWeekday = startD.getDay();
-      const expoWeekday = jsWeekday === 0 ? 1 : jsWeekday + 1;
-
-      const weeklyType = SchedulableTriggerInputTypes?.WEEKLY ?? 'weekly';
-      trigger = {
-        type: weeklyType,
-        weekday: expoWeekday,
-        hour: triggerHour,
-        minute: triggerMinute,
-        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
-      };
-    } else {
-      // Günlük (intervalDays === 1)
-      const dailyType = SchedulableTriggerInputTypes?.DAILY ?? 'daily';
-      trigger = {
-        type: dailyType,
-        hour: triggerHour,
-        minute: triggerMinute,
-        ...(Platform.OS === 'android' && { channelId: NOTIFICATION_CHANNEL_ID }),
-      };
-    }
-
-    await Notifications.scheduleNotificationAsync({
-      identifier: identifierStr,
-      content: {
-        title,
-        body,
-        data: { medicationId, type: 'med-warning' },
-        sound: 'default',
-        priority: 'max',
-      },
-      trigger,
-    });
-
-    return identifierStr;
+    return `med-${medicationId}-${time.replace(':', '')}`;
   } catch (_err) {
     return 'error';
   }
 };
 
 /**
- * Periyodik ilaç alındıktan sonra, bir sonraki alım tarihi için
- * bildirimi yeniden zamanlar. (Seçenek B — alım sonrası tetikleme)
- * Sadece intervalDays > 1 && intervalDays !== 7 için geçerlidir.
+ * İlaç alındıktan sonra bildirimleri yeniden zamanlar.
+ * İlaç "alındı" durumuna geçtiği için bugünün kalan bildirimi iptal edilir ve sonraki günler zamanlanır.
  */
 export const rescheduleIntervalNotificationAfterTake = async (
   medicationId: string,
@@ -330,38 +355,30 @@ export const rescheduleIntervalNotificationAfterTake = async (
   time: string,
   lang: 'tr' | 'en',
   intervalDays: number,
-  newStartDate: string  // Güncellenmiş startDate (periyot değiştiyse yeni tarih)
+  newStartDate: string
 ): Promise<void> => {
   if (!Notifications) return;
-  if (intervalDays <= 1 || intervalDays === 7) return;
 
   const state = useStore.getState();
   if (!state.notificationsEnabled) return;
 
-  const [h, m] = time.split(':').map(Number);
-  if (isNaN(h) || isNaN(m)) return;
-
-  const identifierStr = `med-${medicationId}-${time.replace(':', '')}`;
-  const title = lang === 'tr' ? '💊 İlaç Zamanı!' : '💊 Medication Time!';
   const med = state.medications.find(m => m.id === medicationId);
-  if (med?.type === 'vaccine') return;
+  if (!med) return;
 
-  const profile = med ? state.profiles.find(p => p.id === med.profileId) : null;
-  const profileName = profile ? profile.name : '';
-
-  const body = lang === 'tr'
-    ? (profileName ? `${profileName} için ` : '') + `${medicationName} (${dosage}) alma zamanı.`
-    : `Time to take ${medicationName} (${dosage})` + (profileName ? ` for ${profileName}.` : '.');
-
-  // Alım yapıldığı gün (yani bugün), bir sonraki cycle'a git
-  const todayMidnight = new Date();
-  todayMidnight.setHours(0, 0, 0, 0);
-
-  const nextDateMidnight = new Date(todayMidnight.getTime() + intervalDays * 24 * 60 * 60 * 1000);
-  const nextDate = new Date(nextDateMidnight);
-  nextDate.setHours(h, m, 0, 0);
-
-  await scheduleOneTimeNotification(identifierStr, title, body, nextDate, medicationId);
+  // İlacın tüm bildirimlerini iptal edip yeniden zamanlayarak
+  // "alınmış" olan günleri otomatik olarak atlamasını sağlıyoruz.
+  await cancelMedicationNotifications(medicationId);
+  for (const t of (med.times || [])) {
+    await scheduleMedicationNotification(
+      med.id,
+      med.name,
+      med.dosage,
+      t,
+      lang,
+      med.intervalDays || 1,
+      med.startDate
+    );
+  }
 };
 
 export const cancelMedicationNotifications = async (medicationId: string): Promise<void> => {

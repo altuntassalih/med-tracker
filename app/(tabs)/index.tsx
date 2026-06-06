@@ -7,14 +7,18 @@ import {
   TouchableOpacity,
   RefreshControl,
   Dimensions,
+  Platform,
+  Modal,
+  Image,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { useStore } from '../../store/useStore';
-import { getMedications, Medication, addMedicationLog, MedicationLog, updateMedication } from '../../services/firestore';
+import { getMedications, Medication, addMedicationLog, MedicationLog, updateMedication, deleteMedicationLog, updateMedicationLog, upsertDailyHealthLog } from '../../services/firestore';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { checkAndRefreshEndOfDayNotification, rescheduleIntervalNotificationAfterTake, scheduleMedicationNotification, cancelMedicationNotifications, requestNotificationPermission, triggerCriticalStockNotification } from '../../services/notifications';
-import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, STOCK_THRESHOLD_CRITICAL, STOCK_THRESHOLD_WARNING } from '../../constants/AppConstants';
+import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, STOCK_THRESHOLD_CRITICAL, STOCK_THRESHOLD_WARNING, STATUS_TAKEN, STATUS_POSTPONED, STATUS_MISSED, STATUS_PENDING, STATUS_OVERDUE, STATUS_UPCOMING, STATUS_FINISHED, GENDER_FEMALE } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
-import { getLocalDateString } from '../../utils/date';
+import { getLocalDateString, formatDate } from '../../utils/date';
 
 const { width } = Dimensions.get('window');
 
@@ -59,9 +63,13 @@ export default function HomeScreen() {
   const {
     user, profiles, activeProfileId, setActiveProfileId,
     medications: allMedications, medicationLogs, addMedicationLogState,
-    updateMedication: updateMedInStore, language, theme, showAlert,
-    dismissedStockWarnings, dismissStockWarning
+    updateMedication: updateMedInStore, deleteMedicationLogState, language, theme, showAlert,
+    dismissedStockWarnings, dismissStockWarning, updateMedicationLogState,
+    dailyHealthLogs, showPastWater, showPastSleep, showPastWeight, showPastMood
   } = useStore();
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedPickerDate, setSelectedPickerDate] = useState<string | null>(null);
+  const [androidMonthView, setAndroidMonthView] = useState(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [tick, setTick] = useState(0); // Her dakika UI'ı tazeler
 
@@ -70,11 +78,24 @@ export default function HomeScreen() {
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
   
-  const medications = (allMedications || []).filter(m => m.profileId === activeProfile?.id && m.isActive !== false);
+  const medications = (allMedications || []).filter(m => m.profileId === activeProfile?.id);
   const logs = (medicationLogs || []).filter(l => l.profileId === activeProfile?.id);
+
+  const getTranslatedUnit = (u: string) => {
+    const lang = language as LanguageCode;
+    const translationKey = `medicationOptions.units.${u}`;
+    const translated = t(lang, translationKey);
+    return translated === translationKey ? u : translated;
+  };
 
   const todayStr = getLocalDateString();
   const yesterdayStr = getLocalDateString(new Date(Date.now() - 86400000));
+
+  const openDatePicker = () => {
+    setSelectedPickerDate(selectedDate);
+    setAndroidMonthView(new Date(selectedDate + 'T00:00:00'));
+    setShowDatePicker(true);
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -152,47 +173,40 @@ export default function HomeScreen() {
     });
   };
 
-  const handleTakeMedication = async (medId: string, time: string, diff?: number) => {
+  const handleTakeMedication = async (medId: string, time: string, dateStr: string) => {
     if (!activeProfile?.id) return;
-    
     const lang = language as LanguageCode;
-
-    // --- Hangi günün ilacı? ---
-    // diff === -2000: Özel marker "dünün ilacı" (overdue listesinden, label='Dün')
-    // diff < 0 ve timeMinutes > currentMinutes: saat ilerisi demek ama gece yarısını geçmiş → DÜN
-    // Diğer durumlar: BUGÜN
-    let targetStr = todayStr;
-
-    if (diff === -2000) {
-      targetStr = yesterdayStr;
-    } else if (diff !== undefined && diff < 0) {
-      const [h, m] = time.split(':').map(Number);
-      const timeMinutes = h * 60 + m;
-      const now = new Date();
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-      // Saat gece yarısından sonra ve ilaç saati günün ilerisi (örn. 22:00)
-      // → Bu dünkü ilaçtır
-      if (timeMinutes > currentMinutes) {
-        targetStr = yesterdayStr;
-      }
-    }
-
     const med = medications.find(m => m.id === medId);
     const intervalDays = med?.intervalDays;
     const isIntervalDrug = intervalDays && intervalDays > 1 && intervalDays !== 7;
 
-    // --- Periyodik ilaç alım kaydı ---
-    const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
-      profileId: activeProfile.id,
-      medicationId: medId,
-      expectedTime: time,
-      takenAt: new Date().toISOString(),
-      scheduledDate: targetStr,
-      status: 'taken',
-    };
-    addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
-    await addMedicationLog(logData);
+    const existingLog = logs.find((l) =>
+      l.medicationId === medId &&
+      l.expectedTime === time &&
+      (l.scheduledDate === dateStr || (!l.scheduledDate && l.takenAt.startsWith(dateStr)))
+    );
+
+    if (existingLog) {
+      updateMedicationLogState(existingLog.id, { status: 'taken', takenAt: new Date().toISOString() });
+      await updateMedicationLog(existingLog.id, { status: 'taken', takenAt: new Date().toISOString() });
+    } else {
+      const logData: Omit<MedicationLog, 'id' | 'createdAt'> = {
+        profileId: activeProfile.id,
+        medicationId: medId,
+        expectedTime: time,
+        takenAt: new Date().toISOString(),
+        scheduledDate: dateStr,
+        status: 'taken',
+      };
+      const tempId = 'temp_' + Date.now();
+      addMedicationLogState({ id: tempId, ...logData });
+      try {
+        const newLog = await addMedicationLog(logData);
+        updateMedicationLogState(tempId, { id: newLog.id });
+      } catch (err) {
+        // fail silently or keep local tempId
+      }
+    }
 
     // Kritik stok uyarısı kontrolü
     if (med && med.totalQuantity !== undefined) {
@@ -210,20 +224,25 @@ export default function HomeScreen() {
       }
     }
 
-    // Periyodik bildirim: alım sonrası sonraki tarihi zamanla
-    if (isIntervalDrug && med) {
+    // Bildirimleri güncelle: alım sonrası bugünün kalan bildirimini iptal et ve sonrakileri zamanla
+    if (med) {
       rescheduleIntervalNotificationAfterTake(
-        med.id, med.name, med.dosage, time, lang, intervalDays, med.startDate
+        med.id, med.name, med.dosage, time, lang, intervalDays || 1, med.startDate
       );
     }
 
     checkAndRefreshEndOfDayNotification(lang);
 
-    // --- Periyot güncelleme sorusu ---
-    // Senaryo: Dünkü (overdue "Dün") periyodik ilaç bugün alındı
-    // → "Periyodu bugüne endekslemek ister misiniz?" sor
-    if (isIntervalDrug && med && diff === -2000) {
-      setTimeout(() => askPeriodReset(med), 600);
+    // Periyot güncelleme sorusu: Sadece alım BUGÜN ise ve bugün o ilacın alım periyodunda değilse sor
+    if (isIntervalDrug && med && dateStr === todayStr) {
+      const start = new Date(med.startDate + 'T00:00:00');
+      const target = new Date(todayStr + 'T00:00:00');
+      const daysDiff = Math.floor((target.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+      const isAlignedToday = daysDiff >= 0 && daysDiff % intervalDays === 0;
+
+      if (!isAlignedToday) {
+        setTimeout(() => askPeriodReset(med), 600);
+      }
     }
   };
 
@@ -239,8 +258,14 @@ export default function HomeScreen() {
       scheduledDate: targetStr,
       status: 'postponed',
     };
-    addMedicationLogState({ id: 'temp_' + Date.now(), ...logData });
-    await addMedicationLog(logData);
+    const tempId = 'temp_' + Date.now();
+    addMedicationLogState({ id: tempId, ...logData });
+    try {
+      const newLog = await addMedicationLog(logData);
+      updateMedicationLogState(tempId, { id: newLog.id });
+    } catch (err) {
+      // fail silently
+    }
 
     await updateMedication(med.id, { startDate: newStartDate });
     updateMedInStore(med.id, { startDate: newStartDate });
@@ -264,25 +289,14 @@ export default function HomeScreen() {
     });
   };
 
-  const handlePostpone = async (medId: string, time: string, diff?: number) => {
+  const handlePostpone = async (medId: string, time: string, dateStr: string) => {
     if (!activeProfile?.id) return;
     const lang = language as LanguageCode;
-
-    let targetStr = todayStr;
-    if (diff === -2000) {
-      targetStr = yesterdayStr;
-    } else if (diff !== undefined && diff < 0) {
-      const [h, m] = time.split(':').map(Number);
-      const timeMinutes = h * 60 + m;
-      const now = new Date();
-      const currentMinutes = now.getHours() * 60 + now.getMinutes();
-      if (timeMinutes > currentMinutes) targetStr = yesterdayStr;
-    }
 
     const med = medications.find(m => m.id === medId);
     if (!med) return;
 
-    const nextDayStr = addDaysToDateString(targetStr, 1);
+    const nextDayStr = addDaysToDateString(dateStr, 1);
 
     // Eğer periyot 1 gün veya belirtilmemişse önce onay sor, sonra yarına ertele
     if (!med.intervalDays || med.intervalDays <= 1) {
@@ -298,7 +312,7 @@ export default function HomeScreen() {
           { text: t(lang, 'settings.cancel'), style: 'cancel' },
           {
             text: t(lang, 'home.postponeBtn'),
-            onPress: () => executePostpone(med, time, targetStr, nextDayStr, t(lang, 'home.postponeSuccess')),
+            onPress: () => executePostpone(med, time, dateStr, nextDayStr, t(lang, 'home.postponeSuccess')),
           }
         ]
       });
@@ -306,7 +320,7 @@ export default function HomeScreen() {
     }
 
     // Periyodik ilaç ise kullanıcıya sor: 1 gün mü yoksa 1 periyot mu?
-    const nextPeriodStr = addDaysToDateString(targetStr, med.intervalDays);
+    const nextPeriodStr = addDaysToDateString(dateStr, med.intervalDays);
 
     showAlert({
       message: t(lang, 'home.postponeChoose'),
@@ -315,11 +329,11 @@ export default function HomeScreen() {
         { text: t(lang, 'settings.cancel'), style: 'cancel' },
         {
           text: t(lang, 'home.postponeNextDay'),
-          onPress: () => executePostpone(med, time, targetStr, nextDayStr, t(lang, 'home.postponeSuccess')),
+          onPress: () => executePostpone(med, time, dateStr, nextDayStr, t(lang, 'home.postponeSuccess')),
         },
         {
           text: t(lang, 'home.postponeNextPeriod'),
-          onPress: () => executePostpone(med, time, targetStr, nextPeriodStr, t(lang, 'home.postponeSuccessPeriod')),
+          onPress: () => executePostpone(med, time, dateStr, nextPeriodStr, t(lang, 'home.postponeSuccessPeriod')),
         },
       ],
     });
@@ -331,123 +345,194 @@ export default function HomeScreen() {
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
-  const getMedicationLists = () => {
+  const getCalendarMinDate = () => {
+    const activeMeds = medications.filter(m => m.profileId === activeProfile?.id);
+    if (activeMeds.length === 0) return new Date();
+    const dates = activeMeds
+      .map(m => m.startDate)
+      .filter(Boolean)
+      .map(dStr => {
+        const [y, m, d] = dStr.split('-').map(Number);
+        return new Date(y, m - 1, d);
+      });
+    if (dates.length === 0) return new Date();
+    return new Date(Math.min(...dates.map(d => d.getTime())));
+  };
+
+  const calculateSlotsForDay = (targetDateStr: string) => {
+    const slots: {
+      med: Medication;
+      time: string;
+      timeMinutes: number;
+      status: 'taken' | 'postponed' | 'missed' | 'pending' | 'overdue' | 'upcoming' | 'finished';
+      logId?: string;
+    }[] = [];
+
     const now = new Date();
+    const isToday = targetDateStr === todayStr;
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    let upcoming: any[] = [];
-    let overdue: any[] = [];
-    let completed: any[] = [];
-    // Dün overdue'ya eklenen ilaç+saat çiftlerini takip et (çifter önlemek için)
-    const addedToOverdue = new Set<string>();
-
     medications.forEach((med) => {
-      // 1. DÜNÜ KONTROL ET (Dünden kalan içilmemiş ilaç var mı?)
-      let isForYesterday = false;
-      if (med.type === 'vaccine') {
-        isForYesterday = !!med.dates && med.dates.includes(yesterdayStr);
+      const isCurrentlyActive = med.isActive !== false;
+      const hasStarted = med.startDate <= targetDateStr;
+      
+      let isScheduledForTargetDate = false;
+      if (isCurrentlyActive) {
+        isScheduledForTargetDate = hasStarted && (!med.endDate || targetDateStr <= med.endDate);
       } else {
-        const medStartedBeforeToday = med.startDate <= yesterdayStr;
-        if (medStartedBeforeToday) {
-          if (med.intervalDays && med.intervalDays > 1) {
-            const start = new Date(med.startDate + 'T00:00:00');
-            const yesterdayDate = new Date();
-            yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-            yesterdayDate.setHours(0, 0, 0, 0);
-            const daysDiff = Math.floor((yesterdayDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-            if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForYesterday = true;
-          } else {
-            isForYesterday = true;
-          }
-        }
+        isScheduledForTargetDate = hasStarted && !!med.endDate && targetDateStr <= med.endDate;
       }
 
-      if (isForYesterday) {
-        (med.times || []).forEach((time) => {
-          const isTakenYesterday = logs.some((l) => 
-            l.medicationId === med.id && 
-            l.expectedTime === time && 
-            (l.scheduledDate === yesterdayStr || (!l.scheduledDate && l.takenAt.startsWith(yesterdayStr))) &&
-            (l.status === 'taken' || l.status === 'postponed')
-          );
+      if (!isScheduledForTargetDate) return;
 
-          if (!isTakenYesterday) {
-            // Dünden kalan ilaç -> Süresi geçti
-            const key = `${med.id}-${time}`;
-            addedToOverdue.add(key);
-            overdue.push({ med, time, timeMinutes: 0, diff: -2000, label: t(language as LanguageCode, 'home.yesterday') || 'Dün' });
-          }
-        });
-      }
-
-      // 2. BUGÜNÜ KONTROL ET
-      let isForToday = false;
+      let isForDay = false;
       if (med.type === 'vaccine') {
-        isForToday = !!med.dates && med.dates.includes(todayStr);
+        isForDay = !!med.dates && med.dates.includes(targetDateStr);
       } else {
         if (med.intervalDays && med.intervalDays > 1) {
           const start = new Date(med.startDate + 'T00:00:00');
-          const todayDate = new Date();
-          todayDate.setHours(0, 0, 0, 0);
-          const daysDiff = Math.floor((todayDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-          if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) isForToday = true;
+          const target = new Date(targetDateStr + 'T00:00:00');
+          const daysDiff = Math.floor((target.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) {
+            isForDay = true;
+          }
         } else {
-          isForToday = true;
+          isForDay = true;
         }
       }
 
-      if (isForToday) {
-        (med.times || []).forEach((time) => {
-          // Dün overdue'ya eklenmiş aynı ilaç+saat çifti ise bugün atla (çifter olmasın)
-          if (addedToOverdue.has(`${med.id}-${time}`)) return;
+      if (!isForDay) return;
 
-          const isTakenToday = logs.some((l) => 
-            l.medicationId === med.id && 
-            l.expectedTime === time && 
-            (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr))) &&
-            (l.status === 'taken' || l.status === 'postponed')
-          );
-
-          if (isTakenToday) return;
-
-          const [h, m] = time.split(':').map(Number);
-          const timeMinutes = h * 60 + m;
-          let diff = timeMinutes - currentMinutes;
-
-          if (diff < -OVERDUE_THRESHOLD_MINUTES) {
-            // OVERDUE_THRESHOLD_MINUTES dk geçtikten sonra -> Süresi Geçti
-            overdue.push({ med, time, timeMinutes, diff });
-          } else if (diff <= UPCOMING_WINDOW_MINUTES) {
-            // Henüz saati gelmeyenler veya grace period içindekiler -> Yaklaşan
-            upcoming.push({ med, time, timeMinutes, diff });
-          }
-        });
-      }
-    });
-
-    // Tamamlananlar: filtrelenmiş medications listesinden al (çifter olmasın)
-    medications.forEach((med) => {
       (med.times || []).forEach((time) => {
-        const isTakenToday = logs.some((l) => 
+        const [h, m] = time.split(':').map(Number);
+        const timeMinutes = h * 60 + m;
+
+        const log = logs.find((l) => 
           l.medicationId === med.id && 
           l.expectedTime === time && 
-          (l.scheduledDate === todayStr || (!l.scheduledDate && l.takenAt.startsWith(todayStr))) &&
-          l.status === 'taken'
+          (l.scheduledDate === targetDateStr || (!l.scheduledDate && l.takenAt.startsWith(targetDateStr)))
         );
-        if (isTakenToday) {
-          completed.push({ med, time });
+
+        let status: 'taken' | 'postponed' | 'missed' | 'pending' | 'overdue' | 'upcoming' | 'finished' = STATUS_PENDING;
+        if (log) {
+          if (log.status === STATUS_TAKEN) status = STATUS_TAKEN;
+          else if (log.status === STATUS_POSTPONED) status = STATUS_POSTPONED;
+          else if (log.status === STATUS_MISSED) status = STATUS_MISSED;
+        } else {
+          if (targetDateStr < todayStr) {
+            status = STATUS_MISSED;
+          } else if (targetDateStr === todayStr) {
+            if (timeMinutes < currentMinutes - OVERDUE_THRESHOLD_MINUTES) {
+              status = STATUS_OVERDUE;
+            } else if (timeMinutes >= currentMinutes && timeMinutes <= currentMinutes + 120) {
+              status = STATUS_UPCOMING;
+            } else {
+              status = STATUS_PENDING;
+            }
+          } else {
+            status = STATUS_PENDING;
+          }
         }
+
+        const isFinishDay = med.isActive === false && med.endDate === targetDateStr;
+        if (isFinishDay && status !== STATUS_TAKEN && status !== STATUS_POSTPONED) {
+          status = STATUS_FINISHED;
+        }
+
+        slots.push({
+          med,
+          time,
+          timeMinutes,
+          status,
+          logId: log?.id
+        });
       });
     });
 
-    return {
-      upcoming: upcoming.sort((a, b) => a.diff - b.diff),
-      overdue: overdue.sort((a, b) => a.diff - b.diff),
-      completed,
-    };
+    return slots.sort((a, b) => {
+      const aIsDone = a.status === STATUS_TAKEN || a.status === STATUS_POSTPONED || a.status === STATUS_FINISHED;
+      const bIsDone = b.status === STATUS_TAKEN || b.status === STATUS_POSTPONED || b.status === STATUS_FINISHED;
+
+      if (aIsDone && !bIsDone) return 1;
+      if (!aIsDone && bIsDone) return -1;
+      return a.timeMinutes - b.timeMinutes;
+    });
   };
 
-  const { upcoming: upcomingMeds, overdue: overdueMeds, completed: completedMeds } = getMedicationLists();
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+
+  const getDayName = (date: Date) => {
+    const dayIndex = date.getDay();
+    const daysTr = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+    const daysEn = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return language === 'tr' ? daysTr[dayIndex] : daysEn[dayIndex];
+  };
+
+  const getWeeklyDays = () => {
+    const days = [];
+    const today = new Date();
+    for (let i = -3; i <= 3; i++) {
+      const d = new Date();
+      d.setDate(today.getDate() + i);
+      const dStr = getLocalDateString(d);
+      days.push({
+        dateStr: dStr,
+        dateObj: d,
+        dayNum: d.getDate(),
+        dayName: getDayName(d),
+      });
+    }
+    return days;
+  };
+
+  const daySlots = calculateSlotsForDay(selectedDate);
+  const totalSlotsCount = daySlots.length;
+  const completedSlotsCount = daySlots.filter((s) => s.status === 'taken').length;
+  const pendingSlotsCount = daySlots.filter((s) => s.status === 'pending' || s.status === 'overdue' || s.status === 'upcoming').length;
+
+  const handleUndoAction = async (logId: string) => {
+    if (!logId) return;
+    const lang = language as LanguageCode;
+    const log = logs.find((l) => l.id === logId);
+    try {
+      deleteMedicationLogState(logId);
+      await deleteMedicationLog(logId);
+      checkAndRefreshEndOfDayNotification(lang);
+
+      if (log) {
+        const med = medications.find((m) => m.id === log.medicationId);
+        if (med) {
+          await cancelMedicationNotifications(med.id);
+          for (const t of med.times) {
+            await scheduleMedicationNotification(
+              med.id, med.name, med.dosage, t, lang, med.intervalDays || 1, med.startDate
+            );
+          }
+        }
+      }
+    } catch (_err) {
+      showAlert({
+        message: lang === 'tr' ? 'Geri alma işlemi başarısız oldu.' : 'Undo action failed.',
+        type: 'danger'
+      });
+    }
+  };
+
+  const handleAddTodayWater = async (currentWater: number, targetWater: number) => {
+    if (!activeProfile?.id) return;
+    const newWater = currentWater + 250;
+    
+    try {
+      const result = await upsertDailyHealthLog(activeProfile.id, todayStr, {
+        waterIntakeMl: newWater,
+        waterTargetMl: targetWater,
+      });
+      useStore.getState().upsertDailyHealthLogState(activeProfile.id, todayStr, result);
+    } catch (_err) {
+      // fail silently
+    }
+  };
+
 
   const medWarnings: { med: Medication; threshold: number; remaining: number; key: string }[] = [];
   medications.forEach((med) => {
@@ -456,7 +541,16 @@ export default function HomeScreen() {
       const dosageVal = parseFloat(med.dosage || '1');
       const remaining = Math.max(0, med.totalQuantity - (takenCount * dosageVal));
 
-      if (remaining <= STOCK_THRESHOLD_CRITICAL) {
+      const todaySlotsForMed = calculateSlotsForDay(todayStr).filter(s => s.med.id === med.id && s.status !== 'taken');
+      const todayNeededQuantity = todaySlotsForMed.length * dosageVal;
+      const willBeDepletedToday = remaining > 0 && remaining <= todayNeededQuantity;
+
+      if (willBeDepletedToday) {
+        const key = `${med.id}-depleted-today`;
+        if (!(dismissedStockWarnings || []).includes(key)) {
+          medWarnings.push({ med, threshold: 0, remaining, key });
+        }
+      } else if (remaining <= STOCK_THRESHOLD_CRITICAL) {
         const key = `${med.id}-${STOCK_THRESHOLD_CRITICAL}`;
         if (!(dismissedStockWarnings || []).includes(key)) {
           medWarnings.push({ med, threshold: STOCK_THRESHOLD_CRITICAL, remaining, key });
@@ -470,6 +564,94 @@ export default function HomeScreen() {
     }
   });
 
+  const checkIfMedDepletesOnDate = (med: Medication, targetDateStr: string) => {
+    if (med.type === 'vaccine' || med.totalQuantity === undefined) return null;
+
+    const takenCount = logs.filter((l) => l.medicationId === med.id && l.status === 'taken').length;
+    const dosageVal = parseFloat(med.dosage || '1');
+    const remainingToday = Math.max(0, med.totalQuantity - (takenCount * dosageVal));
+
+    if (remainingToday <= 0) return 'depleted_before';
+
+    const dates: string[] = [];
+    const current = new Date(todayStr + 'T00:00:00');
+    const target = new Date(targetDateStr + 'T00:00:00');
+    
+    let count = 0;
+    while (current <= target && count < 100) {
+      dates.push(getLocalDateString(current));
+      current.setDate(current.getDate() + 1);
+      count++;
+    }
+
+    let totalNeededBeforeTarget = 0;
+    let totalNeededOnTarget = 0;
+
+    dates.forEach((dateStr) => {
+      let isForDay = false;
+      if (med.startDate <= dateStr && (!med.endDate || med.endDate >= dateStr)) {
+        if (med.intervalDays && med.intervalDays > 1) {
+          const start = new Date(med.startDate + 'T00:00:00');
+          const curr = new Date(dateStr + 'T00:00:00');
+          const daysDiff = Math.floor((curr.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) {
+            isForDay = true;
+          }
+        } else {
+          isForDay = true;
+        }
+      }
+
+      if (isForDay) {
+        const timesCount = med.times?.length || 0;
+        if (dateStr === todayStr) {
+          const slotsToday = calculateSlotsForDay(todayStr).filter(s => s.med.id === med.id && (s.status === 'pending' || s.status === 'upcoming' || s.status === 'overdue'));
+          totalNeededBeforeTarget += slotsToday.length * dosageVal;
+        } else if (dateStr === targetDateStr) {
+          totalNeededOnTarget += timesCount * dosageVal;
+        } else {
+          totalNeededBeforeTarget += timesCount * dosageVal;
+        }
+      }
+    });
+
+    if (remainingToday <= totalNeededBeforeTarget) {
+      return 'depleted_before';
+    } else if (remainingToday <= totalNeededBeforeTarget + totalNeededOnTarget) {
+      return 'depleted_on';
+    }
+    return null;
+  };
+
+  const futureMedWarnings: { med: Medication; status: 'depleted_on' | 'depleted_before'; remaining: number; key: string }[] = [];
+  
+  if (selectedDate > todayStr) {
+    const todayDate = new Date(todayStr + 'T00:00:00');
+    const selectedDateObj = new Date(selectedDate + 'T00:00:00');
+    const diffDays = Math.floor((selectedDateObj.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    medications.forEach((med) => {
+      const depletionStatus = checkIfMedDepletesOnDate(med, selectedDate);
+      if (depletionStatus === 'depleted_on') {
+        futureMedWarnings.push({
+          med,
+          status: 'depleted_on',
+          remaining: 0,
+          key: `${med.id}-future-depleted-on-${selectedDate}`
+        });
+      } else if (depletionStatus === 'depleted_before') {
+        if (diffDays < 7) {
+          futureMedWarnings.push({
+            med,
+            status: 'depleted_before',
+            remaining: 0,
+            key: `${med.id}-future-depleted-before-${selectedDate}`
+          });
+        }
+      }
+    });
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.bgGlow} />
@@ -481,45 +663,113 @@ export default function HomeScreen() {
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
       >
         <View style={styles.topBar}>
-          <View>
-            <Text style={styles.greeting}>{getTodayGreeting(language as LanguageCode)},</Text>
-            <Text style={styles.userName}>{user?.displayName?.split(' ')[0] ?? 'Kullanıcı'} 👋</Text>
-            <Text style={styles.dateText}>{getTodayDate(language as LanguageCode)}</Text>
+          <View style={{ flex: 1, justifyContent: 'center', marginRight: SPACING.md }}>
+            <Text style={styles.greeting} numberOfLines={1} adjustsFontSizeToFit>
+              {getTodayGreeting(language as LanguageCode)}, <Text style={styles.userName}>{activeProfile?.name?.split(' ')[0] ?? user?.displayName?.split(' ')[0] ?? 'Kullanıcı'} 👋</Text>
+            </Text>
           </View>
-          <TouchableOpacity onPress={() => router.push('/profile-settings')} activeOpacity={0.8}>
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarInitial}>{activeProfile?.avatar || '👤'}</Text>
-            </View>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm }}>
+            <TouchableOpacity onPress={() => router.push('/pharmacies')} activeOpacity={0.8} style={styles.headerPharmacyBtn}>
+              <Text style={{ fontSize: 22 }}>🏥</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/profile-settings')} activeOpacity={0.8}>
+              <View style={[styles.avatarPlaceholder, { overflow: 'hidden' }]}>
+                {activeProfile?.avatar?.startsWith('data:image/') ? (
+                  <Image source={{ uri: activeProfile.avatar }} style={{ width: 48, height: 48 }} />
+                ) : (
+                  <Text style={styles.avatarInitial}>{activeProfile?.avatar || '👤'}</Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          </View>
         </View>
 
+        {/* Gelecek Tarihli Stok Uyarıları */}
+        {selectedDate > todayStr && futureMedWarnings.length > 0 && (
+          <View style={styles.section}>
+            {futureMedWarnings.map((warning) => (
+              <View key={warning.key} style={[styles.warningCard, styles.warningCardDanger]}>
+                <View style={styles.warningCardHeader}>
+                  <Text style={{ fontSize: 24 }}>
+                    {warning.status === 'depleted_on' ? '⚠️' : '❌'}
+                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.warningCardTitle}>
+                      {warning.status === 'depleted_on'
+                        ? t(language as LanguageCode, 'home.stockDepletingOnDate')
+                        : t(language as LanguageCode, 'home.stockDepletedBeforeDate')}
+                    </Text>
+                    <Text style={styles.warningCardText}>
+                      {warning.status === 'depleted_on'
+                        ? (language === 'tr'
+                          ? `"${warning.med.name}" ilacının stoku bu tarihte bitecek!`
+                          : `"${warning.med.name}" stock will run out on this date!`)
+                        : (language === 'tr'
+                          ? `"${warning.med.name}" ilacının stoku bu tarihten önce tükenmiş olacak!`
+                          : `"${warning.med.name}" stock will have run out before this date!`)}
+                    </Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm }}>
+                  <TouchableOpacity
+                    style={[styles.warningCardPharmacyBtn, { flex: 1 }]}
+                    onPress={() => router.push('/pharmacies')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.warningCardPharmacyBtnText}>
+                      🏥 {language === 'tr' ? 'Eczane Bul' : 'Find Pharmacy'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* Kritik Stok Uyarıları */}
-        {medWarnings.length > 0 && (
+        {selectedDate === todayStr && medWarnings.length > 0 && (
           <View style={styles.section}>
             {medWarnings.map((warning) => (
-              <View key={warning.key} style={[styles.warningCard, warning.threshold === STOCK_THRESHOLD_CRITICAL && styles.warningCardDanger]}>
+              <View key={warning.key} style={[styles.warningCard, (warning.threshold === STOCK_THRESHOLD_CRITICAL || warning.threshold === 0) && styles.warningCardDanger]}>
                 <View style={styles.warningCardHeader}>
                   <Text style={styles.warningCardIcon}>⚠️</Text>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.warningCardTitle}>
-                      {language === 'tr' ? 'Kritik Stok Uyarısı' : 'Critical Stock Alert'}
+                      {warning.threshold === 0
+                        ? (language === 'tr' ? 'Stok Bugün Bitecek!' : 'Stock Depleting Today!')
+                        : (language === 'tr' ? 'Kritik Stok Uyarısı' : 'Critical Stock Alert')}
                     </Text>
                     <Text style={styles.warningCardText}>
-                      {language === 'tr'
-                        ? `"${warning.med.name}" için kalan stok ${warning.remaining} adettir! (Kritik Eşik: ${warning.threshold})`
-                        : `Remaining stock for "${warning.med.name}" is ${warning.remaining} units! (Critical Threshold: ${warning.threshold})`}
+                      {warning.threshold === 0
+                        ? (language === 'tr'
+                          ? `"${warning.med.name}" için kalan stok ${warning.remaining} adettir ve bugün alınacak dozlarla stok tükenecektir!`
+                          : `Remaining stock for "${warning.med.name}" is ${warning.remaining} units and will run out with today's doses!`)
+                        : (language === 'tr'
+                          ? `"${warning.med.name}" için kalan stok ${warning.remaining} adettir! (Kritik Eşik: ${warning.threshold})`
+                          : `Remaining stock for "${warning.med.name}" is ${warning.remaining} units! (Critical Threshold: ${warning.threshold})`)}
                     </Text>
                   </View>
                 </View>
-                <TouchableOpacity
-                  style={[styles.warningCardDismissBtn, warning.threshold === STOCK_THRESHOLD_CRITICAL && styles.warningCardDismissBtnDanger]}
-                  onPress={() => dismissStockWarning(warning.key)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.warningCardDismissText, warning.threshold === STOCK_THRESHOLD_CRITICAL && styles.warningCardDismissTextDanger]}>
-                    {language === 'tr' ? 'Tamam' : 'OK'}
-                  </Text>
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm }}>
+                  <TouchableOpacity
+                    style={styles.warningCardPharmacyBtn}
+                    onPress={() => router.push('/pharmacies')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.warningCardPharmacyBtnText}>
+                      🏥 {language === 'tr' ? 'Eczane Bul' : 'Find Pharmacy'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.warningCardDismissBtn, { flex: 1, marginTop: 0 }, (warning.threshold === STOCK_THRESHOLD_CRITICAL || warning.threshold === 0) && styles.warningCardDismissBtnDanger]}
+                    onPress={() => dismissStockWarning(warning.key)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.warningCardDismissText, (warning.threshold === STOCK_THRESHOLD_CRITICAL || warning.threshold === 0) && styles.warningCardDismissTextDanger]}>
+                      {language === 'tr' ? 'Tamam' : 'OK'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             ))}
           </View>
@@ -535,7 +785,11 @@ export default function HomeScreen() {
                   style={[styles.profileChip, activeProfileId === profile.id && styles.profileChipActive]}
                   onPress={() => setActiveProfileId(profile.id)}
                 >
-                  <Text style={styles.profileChipEmoji}>{profile.avatar || (profile.isMain ? '👤' : '👦')}</Text>
+                  {profile.avatar?.startsWith('data:image/') ? (
+                    <Image source={{ uri: profile.avatar }} style={{ width: 16, height: 16, borderRadius: 8 }} />
+                  ) : (
+                    <Text style={styles.profileChipEmoji}>{profile.avatar || (profile.isMain ? '👤' : '👦')}</Text>
+                  )}
                   <Text style={[styles.profileChipText, activeProfileId === profile.id && styles.profileChipTextActive]}>
                     {profile.name}
                   </Text>
@@ -545,176 +799,516 @@ export default function HomeScreen() {
           </View>
         )}
 
+        {/* Haftalık Takip Başlığı ve Takvim Butonu */}
+        <View style={styles.weeklyHeader}>
+          <Text style={styles.weeklyTitle}>
+            {language === 'tr' ? 'Günlük Takip' : 'Daily Tracker'}
+          </Text>
+          <TouchableOpacity
+            style={styles.calendarBtn}
+            onPress={openDatePicker}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.calendarBtnText}>📅 {language === 'tr' ? 'Tarih Seç' : 'Select Date'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        {showDatePicker && (
+          <Modal 
+            transparent 
+            animationType="fade" 
+            visible={showDatePicker} 
+            onRequestClose={() => { setShowDatePicker(false); setSelectedPickerDate(null); }}
+          >
+            <View style={styles.pickerOverlay}>
+              <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder, padding: 0, overflow: 'hidden' }]}>
+                <View style={[styles.customDatePickerHeader, { backgroundColor: colors.primary }]}>
+                  <Text style={styles.customDatePickerYear}>
+                    {new Date(selectedPickerDate || selectedDate).getFullYear()}
+                  </Text>
+                  <Text style={styles.customDatePickerDate}>
+                    {new Date(selectedPickerDate || selectedDate).toLocaleDateString(language === 'tr' ? 'tr-TR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                  </Text>
+                </View>
+                <View style={styles.customDatePickerBody}>
+                  {Platform.OS === 'ios' ? (
+                    <View style={{ paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md }}>
+                      <DateTimePicker
+                        value={new Date(selectedPickerDate || selectedDate)}
+                        mode="date"
+                        display="spinner"
+                        minimumDate={getCalendarMinDate()}
+                        onChange={(_, date) => {
+                          if (date) {
+                            const formatted = getLocalDateString(date);
+                            setSelectedPickerDate(formatted);
+                          }
+                        }}
+                        themeVariant={theme}
+                        textColor={colors.textPrimary}
+                        style={{ height: 150 }}
+                      />
+                    </View>
+                  ) : (
+                    /* Pure JS Custom Grid Date Picker for Android - Fully matches Theme! */
+                    <View style={{ padding: SPACING.md }}>
+                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.lg }}>
+                          <TouchableOpacity 
+                            onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() - 1, 1))} 
+                            style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}
+                          >
+                             <Text style={{ color: colors.textPrimary }}>◀</Text>
+                          </TouchableOpacity>
+                          <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.textPrimary }}>
+                             {androidMonthView.toLocaleDateString(language === 'tr' ? 'tr-TR' : 'en-US', { month: 'long', year: 'numeric' })}
+                          </Text>
+                          <TouchableOpacity 
+                            onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 1))} 
+                            style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}
+                          >
+                             <Text style={{ color: colors.textPrimary }}>▶</Text>
+                          </TouchableOpacity>
+                       </View>
+                       <View style={{ flexDirection: 'row', marginBottom: SPACING.md }}>
+                          {['Pt','Sa','Ça','Pe','Cu','Ct','Pz'].map((d, i) => <Text key={i} style={{ flex: 1, textAlign: 'center', color: colors.textSecondary, fontWeight: 'bold', fontSize: 12 }}>{d}</Text>)}
+                       </View>
+                       <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                          {Array.from({ length: (new Date(androidMonthView.getFullYear(), androidMonthView.getMonth(), 1).getDay() + 6) % 7 }).map((_, i) => <View key={`b-${i}`} style={{ width: '14.28%', aspectRatio: 1 }} />)}
+                          {Array.from({ length: new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 0).getDate() }, (_, i) => i + 1).map(d => {
+                             const dStr = `${androidMonthView.getFullYear()}-${(androidMonthView.getMonth()+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
+                             const isSelected = (selectedPickerDate || selectedDate) === dStr;
+                             const minDateStr = getLocalDateString(getCalendarMinDate());
+                             const isBeforeMin = dStr < minDateStr;
+
+                             return (
+                                <TouchableOpacity 
+                                  key={d} 
+                                  onPress={() => {
+                                    if (!isBeforeMin) {
+                                      setSelectedPickerDate(dStr);
+                                    }
+                                  }} 
+                                  disabled={isBeforeMin}
+                                  style={{ width: '14.28%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center', opacity: isBeforeMin ? 0.25 : 1 }}
+                                >
+                                   <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: isSelected ? colors.primary : 'transparent', justifyContent: 'center', alignItems: 'center' }}>
+                                      <Text style={{ color: isSelected ? '#fff' : colors.textPrimary, fontWeight: isSelected ? 'bold' : 'normal', fontSize: 15 }}>{d}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                             );
+                          })}
+                       </View>
+                    </View>
+                  )}
+
+                  <View style={styles.customDatePickerActions}>
+                    <TouchableOpacity style={styles.customDatePickerCancelBtn} onPress={() => { setShowDatePicker(false); setSelectedPickerDate(null); }}>
+                      <Text style={[styles.customDatePickerActionText, { color: colors.textSecondary }]}>{t(language as LanguageCode, 'settings.cancel')}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={styles.customDatePickerOkBtn} 
+                      onPress={() => {
+                        if (selectedPickerDate) {
+                          setSelectedDate(selectedPickerDate);
+                        }
+                        setShowDatePicker(false);
+                        setSelectedPickerDate(null);
+                      }}
+                    >
+                      <Text style={[styles.customDatePickerActionText, { color: colors.primary, fontWeight: 'bold' }]}>{language === 'tr' ? 'Onayla' : 'Confirm'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        )}
+
+        {/* Haftalık Takip Barı */}
+        <View style={styles.weeklyBar}>
+          {getWeeklyDays().map((day) => {
+            const isActive = day.dateStr === selectedDate;
+            const isTodayDay = day.dateStr === todayStr;
+            return (
+              <TouchableOpacity
+                key={day.dateStr}
+                style={[styles.dayChip, isActive && styles.dayChipActive]}
+                onPress={() => setSelectedDate(day.dateStr)}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.dayName, isActive && styles.dayNameActive]}>{day.dayName}</Text>
+                <Text style={[styles.dayNum, isActive && styles.dayNumActive]}>{day.dayNum}</Text>
+                {isTodayDay && (
+                  <View style={[styles.todayDot, isActive && styles.todayDotActive]} />
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         <View style={styles.statsRow}>
           <View style={[styles.statCard, { borderLeftColor: colors.primary }]}>
             <View style={styles.statCardHeader}>
-              <Text style={styles.statValue}>{medications.length}</Text>
+              <Text style={styles.statValue}>{totalSlotsCount}</Text>
               <Text style={styles.statIcon}>💊</Text>
             </View>
-            <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.activeMed')}</Text>
+            <Text style={styles.statLabel}>{language === 'tr' ? 'Toplam İlaç' : 'Total Meds'}</Text>
           </View>
           <View style={[styles.statCard, { borderLeftColor: colors.secondary }]}>
             <View style={styles.statCardHeader}>
-              <Text style={styles.statValue}>{completedMeds.length}</Text>
+              <Text style={styles.statValue}>{completedSlotsCount}</Text>
               <Text style={styles.statIcon}>✅</Text>
             </View>
             <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.completed')}</Text>
           </View>
           <View style={[styles.statCard, { borderLeftColor: colors.accent }]}>
             <View style={styles.statCardHeader}>
-              <Text style={styles.statValue}>{upcomingMeds.length}</Text>
+              <Text style={styles.statValue}>{pendingSlotsCount}</Text>
               <Text style={styles.statIcon}>⏳</Text>
             </View>
-            <Text style={styles.statLabel}>{t(language as LanguageCode, 'home.upcoming')}</Text>
+            <Text style={styles.statLabel}>{language === 'tr' ? 'Kalan İlaç' : 'Remaining'}</Text>
           </View>
         </View>
 
-        {/* Süresi Geçmiş İlaçlar */}
-        {overdueMeds.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.overdueHeader}>
-              <Text style={styles.overdueTitle}>⏰ {t(language as LanguageCode, 'home.overdueTitle')}</Text>
-              <View style={styles.overdueBadge}>
-                <Text style={styles.overdueBadgeText}>{overdueMeds.length}</Text>
+        {/* Geçmiş Gün Sağlık Özeti */}
+        {selectedDate < todayStr && (() => {
+          const pastHealthLog = dailyHealthLogs.find(
+            (l) => l.profileId === activeProfile?.id && l.date === selectedDate
+          );
+          
+          const hasWater = showPastWater && pastHealthLog && pastHealthLog.waterIntakeMl > 0;
+          const hasSleep = showPastSleep && pastHealthLog && pastHealthLog.sleepHours !== undefined;
+          const hasWeight = showPastWeight && pastHealthLog && pastHealthLog.weightKg !== undefined;
+          const hasMood = showPastMood && pastHealthLog && pastHealthLog.mood !== undefined;
+
+          if (!hasWater && !hasSleep && !hasWeight && !hasMood) {
+            return null;
+          }
+
+          return (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>
+                📊 {t(language as LanguageCode, 'home.pastHealthTitle')}
+              </Text>
+              <View style={styles.healthSummaryCard}>
+                {hasWater && (
+                  <View style={styles.healthSummaryItem}>
+                    <Text style={styles.healthSummaryIcon}>💧</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.healthSummaryLabel}>
+                        {language === 'tr' ? 'Su Tüketimi' : 'Water Intake'}
+                      </Text>
+                      <Text style={styles.healthSummaryValue}>
+                        {pastHealthLog.waterIntakeMl} ml 
+                        {pastHealthLog.waterTargetMl ? ` / ${pastHealthLog.waterTargetMl} ml` : ''}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+                {hasSleep && (
+                  <>
+                    {hasWater && <View style={styles.healthSummaryDivider} />}
+                    <View style={styles.healthSummaryItem}>
+                      <Text style={styles.healthSummaryIcon}>😴</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.healthSummaryLabel}>
+                          {language === 'tr' ? 'Uyku Süresi & Kalite' : 'Sleep & Quality'}
+                        </Text>
+                        <Text style={styles.healthSummaryValue}>
+                          {pastHealthLog.sleepHours} {t(language as LanguageCode, 'health.hours')}
+                          {pastHealthLog.sleepRating ? ` · ${'⭐'.repeat(pastHealthLog.sleepRating)}` : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  </>
+                )}
+                {hasWeight && (
+                  <>
+                    {(hasWater || hasSleep) && <View style={styles.healthSummaryDivider} />}
+                    <View style={styles.healthSummaryItem}>
+                      <Text style={styles.healthSummaryIcon}>⚖️</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.healthSummaryLabel}>
+                          {language === 'tr' ? 'Kilo' : 'Weight'}
+                        </Text>
+                        <Text style={styles.healthSummaryValue}>
+                          {pastHealthLog.weightKg} kg
+                        </Text>
+                      </View>
+                    </View>
+                  </>
+                )}
+                {hasMood && (
+                  <>
+                    {(hasWater || hasSleep || hasWeight) && <View style={styles.healthSummaryDivider} />}
+                    <View style={styles.healthSummaryItem}>
+                      <Text style={styles.healthSummaryIcon}>🎭</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.healthSummaryLabel}>
+                          {language === 'tr' ? 'Ruh Hali' : 'Mood'}
+                        </Text>
+                        <Text style={styles.healthSummaryValue}>
+                          {(() => {
+                            const moods: Record<string, { emoji: string; tr: string; en: string }> = {
+                              excellent: { emoji: '😍', tr: 'Harika', en: 'Excellent' },
+                              good: { emoji: '🙂', tr: 'İyi', en: 'Good' },
+                              neutral: { emoji: '😐', tr: 'Orta', en: 'Neutral' },
+                              bad: { emoji: '🙁', tr: 'Kötü', en: 'Bad' },
+                              terrible: { emoji: '😩', tr: 'Çok Kötü', en: 'Terrible' }
+                            };
+                            const m = moods[pastHealthLog.mood!];
+                            if (!m) return pastHealthLog.mood;
+                            return `${m.emoji} ${language === 'tr' ? m.tr : m.en}`;
+                          })()}
+                        </Text>
+                      </View>
+                    </View>
+                  </>
+                )}
               </View>
             </View>
-            {overdueMeds.map((item, i) => {
-              const minsAgo = Math.abs(item.diff);
-              const hoursAgo = Math.floor(minsAgo / 60);
-              const minsLeft = minsAgo % 60;
-              const timeAgoStr = hoursAgo > 0
-                ? `${hoursAgo}s ${minsLeft}dk önce`
-                : `${minsAgo}dk önce`;
-              return (
-                <View key={i} style={styles.overdueCard}>
-                  <View style={styles.overdueTimeChip}>
-                    <Text style={styles.overdueTimeText}>{item.time}</Text>
-                  </View>
-                  <View style={styles.upcomingInfo}>
-                    <Text style={styles.upcomingName}>{item.med.name}</Text>
-                    {item.med.type !== 'vaccine' && (
-                      <Text style={styles.upcomingDose}>{item.med.dosage} {item.med.unit}</Text>
-                    )}
-                    {item.label ? (
-                      <Text style={styles.overdueAgo}>{item.label}</Text>
-                    ) : (
-                      <Text style={styles.overdueAgo}>{timeAgoStr}</Text>
-                    )}
-                  </View>
-                  <View style={styles.actionButtons}>
-                    <TouchableOpacity style={styles.postponeBtn} onPress={() => handlePostpone(item.med.id, item.time, item.diff)}>
-                      <Text style={styles.postponeBtnEmoji}>⏭️</Text>
-                      <Text style={styles.postponeBtnText}>{t(language as LanguageCode, 'home.postponeBtn')}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time, item.diff)}>
-                      <Text style={styles.takeBtnEmoji}>✓</Text>
-                      <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        )}
+          );
+        })()}
 
+        {/* Bugünün Su Tüketimi Özeti */}
+        {selectedDate === todayStr && showPastWater && (() => {
+          const todayHealthLog = dailyHealthLogs.find(
+            (l) => l.profileId === activeProfile?.id && l.date === todayStr
+          );
+          
+          const currentWater = todayHealthLog?.waterIntakeMl || 0;
+          const weightVal = activeProfile?.weight || 0;
+          const heightVal = activeProfile?.height || 0;
+          const ageVal = activeProfile?.age;
+          const genderVal = activeProfile?.gender;
+          const baseMultiplier = genderVal === GENDER_FEMALE ? 31 : 35;
+          let base = weightVal * baseMultiplier;
+          if (ageVal) {
+            if (ageVal < 30) base = weightVal * (baseMultiplier + 5);
+            else if (ageVal > 65) base = weightVal * (baseMultiplier - 5);
+          }
+          if (heightVal > 185) base += 250;
+          const recommendedTarget = Math.round(base / 100) * 100 || 2000;
+          const targetWater = todayHealthLog?.waterTargetMl ?? recommendedTarget;
+          
+          const progressPercent = Math.min(100, (currentWater / targetWater) * 100);
+          const isBehind = currentWater < targetWater;
+          
+          let statusText = '';
+          let statusColor: string = colors.warning;
+          if (currentWater === 0) {
+            statusText = language === 'tr' ? 'Henüz su tüketimi kaydedilmedi.' : 'No water intake recorded yet.';
+            statusColor = colors.textSecondary;
+          } else if (isBehind) {
+            statusText = language === 'tr' ? 'Hedefinin gerisinde (Daha fazla su içmelisin!) 💧' : 'Behind target (Drink more water!) 💧';
+            statusColor = colors.warning;
+          } else {
+            statusText = language === 'tr' ? 'Tebrikler! Hedefine ulaştın 🎉' : 'Congratulations! Target achieved 🎉';
+            statusColor = colors.success;
+          }
+
+          return (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>
+                {t(language as LanguageCode, 'health.waterTitle')}
+              </Text>
+              <View style={styles.waterTrackerCard}>
+                <View style={styles.waterTrackerHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.waterTrackerValue}>
+                      {currentWater} ml <Text style={styles.waterTrackerTarget}>/ {targetWater} ml</Text>
+                    </Text>
+                    <Text style={[styles.waterTrackerStatus, { color: statusColor }]}>
+                      {statusText}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.waterQuickAddBtn}
+                    onPress={() => handleAddTodayWater(currentWater, targetWater)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.waterQuickAddBtnText}>+250 ml</Text>
+                  </TouchableOpacity>
+                </View>
+                
+                {/* Progress Bar */}
+                <View style={styles.waterProgressBarBg}>
+                  <View style={[styles.waterProgressBarFill, { width: `${progressPercent}%`, backgroundColor: colors.primary }]} />
+                </View>
+              </View>
+            </View>
+          );
+        })()}
+
+        {/* Seçili Günün İlaçları Listesi */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>{t(language as LanguageCode, 'home.upcomingTitle')}</Text>
-          {upcomingMeds.length === 0 ? (
+          <Text style={styles.sectionTitle}>
+            {selectedDate === todayStr
+              ? (language === 'tr' ? 'Bugünün İlaçları' : "Today's Medications")
+              : `${formatDate(selectedDate)} ${language === 'tr' ? 'Tarihli İlaçlar' : 'Medications'}`}
+          </Text>
+
+          {daySlots.length === 0 ? (
             <View style={styles.emptyCard}>
-              <Text style={styles.emptyEmoji}>✅</Text>
-              <Text style={styles.emptyText}>{t(language as LanguageCode, 'home.noUpcoming')}</Text>
+              <Text style={styles.emptyEmoji}>🍃</Text>
+              <Text style={styles.emptyText}>
+                {language === 'tr'
+                  ? 'Bu tarih için planlanmış herhangi bir ilaç bulunmuyor.'
+                  : 'No medications scheduled for this date.'}
+              </Text>
             </View>
           ) : (
-            upcomingMeds.map((item, i) => {
-              const isPast = item.diff < 0;
-              const isSoon = item.diff >= 0 && item.diff <= 30;
+            daySlots.map((item, idx) => {
+              const { med, time, status, logId } = item;
+              const isVaccine = med.type === 'vaccine';
+
+              // Durum detayları
+              let statusText = '';
+              let statusEmoji = '⬜';
+              let statusColor: string = colors.textSecondary;
+              let cardStyle: any = {};
+
+              if (status === STATUS_TAKEN) {
+                statusText = language === 'tr' ? 'Alındı' : 'Taken';
+                statusEmoji = '✅';
+                statusColor = colors.success;
+                cardStyle = styles.slotCardTaken;
+              } else if (status === STATUS_POSTPONED) {
+                const isFinishDay = med.isActive === false && med.endDate === selectedDate;
+                if (isFinishDay) {
+                  statusText = language === 'tr' ? 'Bitirildi (Ertelendi)' : 'Finished (Postponed)';
+                  statusEmoji = '🏁⏭️';
+                } else {
+                  statusText = language === 'tr' ? 'Ertelendi' : 'Postponed';
+                  statusEmoji = '⏭️';
+                }
+                statusColor = colors.warning;
+                cardStyle = styles.slotCardPostponed;
+              } else if (status === STATUS_FINISHED) {
+                statusText = language === 'tr' ? 'Bitirildi' : 'Finished';
+                statusEmoji = '🏁';
+                statusColor = colors.textMuted;
+                cardStyle = styles.slotCardFinished;
+              } else if (status === STATUS_MISSED) {
+                statusText = language === 'tr' ? 'Alınmadı' : 'Missed';
+                statusEmoji = '❌';
+                statusColor = colors.danger;
+                cardStyle = styles.slotCardMissed;
+              } else if (status === STATUS_OVERDUE) {
+                statusText = language === 'tr' ? 'Süresi Geçti' : 'Overdue';
+                statusEmoji = '⏰';
+                statusColor = colors.danger;
+                cardStyle = styles.slotCardOverdue;
+              } else {
+                statusText = language === 'tr' ? 'Bekliyor' : 'Pending';
+                statusEmoji = '⏳';
+                statusColor = colors.primary;
+              }
+
               return (
-                <View key={i} style={[styles.upcomingCard, isSoon && styles.upcomingCardUrgent]}>
-                  <View style={[styles.timeChip, { backgroundColor: isPast ? colors.danger + '33' : isSoon ? colors.warning + '33' : colors.primary + '33' }]}>
-                    <Text style={[styles.timeText, { color: isPast ? colors.danger : isSoon ? colors.warning : colors.primary }]}>
-                      {item.time}
-                    </Text>
+                <View key={`${med.id}-${time}-${idx}`} style={[styles.slotCard, cardStyle]}>
+                  {/* Saat ve Durum */}
+                  <View style={[styles.timeChip, { backgroundColor: statusColor + '18' }]}>
+                    <Text style={[styles.timeText, { color: statusColor }]}>{time}</Text>
                   </View>
-                  <View style={styles.upcomingInfo}>
-                    <Text style={styles.upcomingName}>{item.med.name}</Text>
-                    {item.med.type !== 'vaccine' && (
-                      <Text style={styles.upcomingDose}>{item.med.dosage} {item.med.unit}</Text>
+
+                  {/* İlaç Bilgisi */}
+                  <TouchableOpacity
+                    style={styles.upcomingInfo}
+                    onPress={() => router.push({ pathname: '/medication-detail', params: { id: med.id } })}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.upcomingName}>{med.name}</Text>
+                    {isVaccine ? (
+                      <Text style={styles.upcomingDose}>{language === 'tr' ? 'Aşı' : 'Vaccine'}</Text>
+                    ) : (
+                      <Text style={styles.upcomingDose}>
+                        {med.dosage} {getTranslatedUnit(med.unit)}
+                        {med.strength ? ` · ${med.strength}` : ''}
+                      </Text>
                     )}
-                    <Text style={styles.upcomingDiff}>
-                      {isPast ? t(language as LanguageCode, 'home.passed') : item.diff === 0 ? t(language as LanguageCode, 'home.now') : `${item.diff} ${t(language as LanguageCode, 'home.minsLater')}`}
+                    <Text style={[styles.statusLabel, { color: statusColor }]}>
+                      {statusEmoji} {statusText}
                     </Text>
-                  </View>
+                    {selectedDate > todayStr && (() => {
+                      const depletion = checkIfMedDepletesOnDate(med, selectedDate);
+                      if (depletion === 'depleted_on') {
+                        return (
+                          <Text style={{ fontSize: 11, fontWeight: 'bold', color: colors.danger, marginTop: 4 }}>
+                            {t(language as LanguageCode, 'home.stockDepletedOnDateSlot')}
+                          </Text>
+                        );
+                      } else if (depletion === 'depleted_before') {
+                        const todayDate = new Date(todayStr + 'T00:00:00');
+                        const selectedDateObj = new Date(selectedDate + 'T00:00:00');
+                        const diffDays = Math.floor((selectedDateObj.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
+                        if (diffDays < 7) {
+                          return (
+                            <Text style={{ fontSize: 11, fontWeight: 'bold', color: colors.danger, marginTop: 4 }}>
+                              {t(language as LanguageCode, 'home.stockDepletedBeforeDateSlot')}
+                            </Text>
+                          );
+                        }
+                      }
+                      return null;
+                    })()}
+                  </TouchableOpacity>
+
+                  {/* Butonlar */}
                   <View style={styles.actionButtons}>
-                    <TouchableOpacity style={styles.postponeBtn} onPress={() => handlePostpone(item.med.id, item.time, item.diff)}>
-                      <Text style={styles.postponeBtnEmoji}>⏭️</Text>
-                      <Text style={styles.postponeBtnText}>{t(language as LanguageCode, 'home.postponeBtn')}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.takeBtn} onPress={() => handleTakeMedication(item.med.id, item.time, item.diff)}>
-                      <Text style={styles.takeBtnEmoji}>✓</Text>
-                      <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
-                    </TouchableOpacity>
+                    {/* Log geri alma */}
+                    {(status === STATUS_TAKEN || status === STATUS_POSTPONED) && logId ? (
+                      <TouchableOpacity
+                        style={styles.undoBtn}
+                        onPress={() => handleUndoAction(logId)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.undoBtnText}>{language === 'tr' ? 'Geri Al' : 'Undo'}</Text>
+                      </TouchableOpacity>
+                    ) : null}
+
+                    {/* Aksiyonlar */}
+                    {status === STATUS_PENDING || status === STATUS_OVERDUE || status === STATUS_UPCOMING ? (
+                      <>
+                        {selectedDate <= todayStr && (
+                          <TouchableOpacity
+                            style={styles.postponeBtn}
+                            onPress={() => handlePostpone(med.id, time, selectedDate)}
+                            activeOpacity={0.75}
+                          >
+                            <Text style={styles.postponeBtnEmoji}>⏭️</Text>
+                            <Text style={styles.postponeBtnText}>{t(language as LanguageCode, 'home.postponeBtn')}</Text>
+                          </TouchableOpacity>
+                        )}
+                        {selectedDate <= todayStr && (
+                          <TouchableOpacity
+                            style={styles.takeBtn}
+                            onPress={() => handleTakeMedication(med.id, time, selectedDate)}
+                            activeOpacity={0.75}
+                          >
+                            <Text style={styles.takeBtnEmoji}>✓</Text>
+                            <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
+                          </TouchableOpacity>
+                        )}
+                      </>
+                    ) : null}
+
+                    {status === STATUS_MISSED ? (
+                      selectedDate <= todayStr && (
+                        <TouchableOpacity
+                          style={styles.takeBtn}
+                          onPress={() => handleTakeMedication(med.id, time, selectedDate)}
+                          activeOpacity={0.75}
+                        >
+                          <Text style={styles.takeBtnEmoji}>✓</Text>
+                          <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
+                        </TouchableOpacity>
+                      )
+                    ) : null}
                   </View>
                 </View>
               );
             })
-          )}
-        </View>
-
-        {completedMeds.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t(language as LanguageCode, 'home.completedTitle')}</Text>
-            {completedMeds.map((item, i) => (
-              <View key={i} style={styles.completedCard}>
-                <View style={styles.completedIconBox}>
-                  <Text style={styles.completedIcon}>✅</Text>
-                </View>
-                <View style={styles.completedInfo}>
-                  <Text style={styles.completedName}>{item.med.name}</Text>
-                  <Text style={styles.completedMeta}>
-                    {item.time} {item.med.type === 'vaccine' ? (language === 'tr' ? 'tamamlandı.' : 'completed.') : t(language as LanguageCode, 'home.completedTarget')}
-                  </Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{t(language as LanguageCode, 'home.allMedsTitle')}</Text>
-            <TouchableOpacity onPress={() => router.push('/add-medication')}>
-              <Text style={styles.addLink}>{t(language as LanguageCode, 'home.addBtn')}</Text>
-            </TouchableOpacity>
-          </View>
-          {medications.length === 0 ? (
-            <TouchableOpacity style={styles.addFirstCard} onPress={() => router.push('/add-medication')}>
-              <Text style={styles.addFirstEmoji}>💊</Text>
-              <Text style={styles.addFirstText}>{t(language as LanguageCode, 'home.addFirstTitle')}</Text>
-              <Text style={styles.addFirstSub}>{t(language as LanguageCode, 'home.addFirstSub')}</Text>
-            </TouchableOpacity>
-          ) : (
-            medications.map((med) => (
-              <TouchableOpacity
-                key={med.id}
-                style={styles.medCard}
-                onPress={() => router.push({ pathname: '/medication-detail', params: { id: med.id } })}
-                activeOpacity={0.8}
-              >
-                <View style={styles.medIconContainer}>
-                  <Text style={styles.medIcon}>{med.type === 'vaccine' ? '🛡️' : '💊'}</Text>
-                </View>
-                <View style={styles.medInfo}>
-                  <Text style={styles.medName}>{med.name}</Text>
-                  {med.type === 'vaccine' ? (
-                    <Text style={styles.medDose}>{language === 'tr' ? 'Aşı' : 'Vaccine'}</Text>
-                  ) : (
-                    <Text style={styles.medDose}>{med.dosage} {med.unit}{med.strength ? ` · ${med.strength}` : ''}</Text>
-                  )}
-                  <Text style={styles.medTimes}>{(med.times || []).join(' · ')}</Text>
-                </View>
-                <Text style={styles.medArrow}>›</Text>
-              </TouchableOpacity>
-            ))
           )}
         </View>
       </ScrollView>
@@ -739,14 +1333,13 @@ const getStyles = (colors: any) => StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     paddingHorizontal: SPACING.xl,
     paddingTop: 60,
-    paddingBottom: SPACING.xl,
+    paddingBottom: SPACING.md,
   },
-  greeting: { fontSize: TYPOGRAPHY.fontSizeMd, color: colors.textSecondary },
-  userName: { fontSize: TYPOGRAPHY.fontSize2xl, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary, marginTop: 2 },
-  dateText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.textSecondary, marginTop: 4 },
+  greeting: { fontSize: TYPOGRAPHY.fontSizeLg, color: colors.textSecondary },
+  userName: { fontSize: TYPOGRAPHY.fontSizeLg, fontWeight: TYPOGRAPHY.fontWeightBold, color: colors.textPrimary },
   avatarPlaceholder: {
     width: 48, height: 48, borderRadius: 24,
     backgroundColor: colors.primary,
@@ -960,5 +1553,277 @@ const getStyles = (colors: any) => StyleSheet.create({
   },
   warningCardDismissTextDanger: {
     color: colors.danger,
+  },
+  weeklyBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.xl,
+    marginBottom: SPACING.lg,
+  },
+  dayChip: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 44,
+    height: 60,
+    borderRadius: RADIUS.md,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    paddingVertical: SPACING.xs,
+  },
+  dayChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  dayName: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  dayNameActive: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  dayNum: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  dayNumActive: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  todayDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.primary,
+    marginTop: 4,
+  },
+  todayDotActive: {
+    backgroundColor: '#fff',
+  },
+  weeklyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.xl,
+    marginBottom: SPACING.sm,
+  },
+  weeklyTitle: {
+    fontSize: TYPOGRAPHY.fontSizeMd,
+    fontWeight: TYPOGRAPHY.fontWeightSemiBold,
+    color: colors.textPrimary,
+  },
+  calendarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: RADIUS.full,
+  },
+  calendarBtnText: {
+    fontSize: 12,
+    color: colors.primary,
+    fontWeight: 'bold',
+  },
+  slotCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+    marginBottom: SPACING.sm,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+  },
+  slotCardTaken: {
+    borderColor: colors.success + '44',
+    backgroundColor: colors.success + '08',
+  },
+  slotCardPostponed: {
+    borderColor: colors.warning + '44',
+    backgroundColor: colors.warning + '08',
+  },
+  slotCardOverdue: {
+    borderColor: colors.danger + '44',
+    backgroundColor: colors.danger + '08',
+  },
+  slotCardMissed: {
+    borderColor: colors.danger + '22',
+    backgroundColor: colors.danger + '04',
+  },
+  slotCardUpcoming: {
+    borderColor: colors.primary + '44',
+    backgroundColor: colors.primary + '08',
+  },
+  slotCardFinished: {
+    borderColor: colors.textMuted + '33',
+    backgroundColor: colors.textMuted + '08',
+    opacity: 0.85,
+  },
+  detailIconBtn: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.primary + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6,
+  },
+  detailIconText: {
+    fontSize: 11,
+    color: colors.primary,
+    fontWeight: 'bold',
+  },
+  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center', padding: SPACING.xl },
+  pickerContainer: {
+    width: '100%',
+    borderRadius: RADIUS.xl,
+    padding: SPACING.xxl,
+    borderWidth: 1,
+    elevation: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+  },
+  customDatePickerHeader: { padding: SPACING.xl, alignItems: 'flex-start', justifyContent: 'center' },
+  customDatePickerYear: { fontSize: TYPOGRAPHY.fontSizeMd, color: 'rgba(255,255,255,0.7)', fontWeight: 'bold', marginBottom: 4 },
+  customDatePickerDate: { fontSize: TYPOGRAPHY.fontSize2xl, color: '#fff', fontWeight: 'bold' },
+  customDatePickerBody: { padding: 0 },
+  customDatePickerActions: { flexDirection: 'row', justifyContent: 'flex-end', padding: SPACING.md, gap: SPACING.lg },
+  customDatePickerCancelBtn: { padding: SPACING.md },
+  customDatePickerOkBtn: { padding: SPACING.md },
+  customDatePickerActionText: { fontSize: TYPOGRAPHY.fontSizeMd, textTransform: 'uppercase' },
+  statusLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 4,
+  },
+  undoBtn: {
+    backgroundColor: colors.surfaceBorder + '44',
+    borderColor: colors.surfaceBorder,
+    borderWidth: 1,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  undoBtnText: {
+    fontSize: TYPOGRAPHY.fontSizeSm,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  healthSummaryCard: {
+    backgroundColor: colors.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    gap: SPACING.md,
+  },
+  healthSummaryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+  },
+  healthSummaryIcon: {
+    fontSize: 22,
+    width: 28,
+    textAlign: 'center',
+  },
+  healthSummaryLabel: {
+    fontSize: TYPOGRAPHY.fontSizeXs,
+    color: colors.textSecondary,
+  },
+  healthSummaryValue: {
+    fontSize: TYPOGRAPHY.fontSizeMd,
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+    marginTop: 2,
+  },
+  healthSummaryDivider: {
+    height: 1,
+    backgroundColor: colors.surfaceBorder,
+    marginVertical: 2,
+  },
+  waterTrackerCard: {
+    backgroundColor: colors.surface,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    gap: SPACING.md,
+  },
+  waterTrackerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  waterTrackerValue: {
+    fontSize: TYPOGRAPHY.fontSizeXl,
+    fontWeight: TYPOGRAPHY.fontWeightBold,
+    color: colors.textPrimary,
+  },
+  waterTrackerTarget: {
+    fontSize: TYPOGRAPHY.fontSizeSm,
+    color: colors.textSecondary,
+    fontWeight: 'normal',
+  },
+  waterTrackerStatus: {
+    fontSize: TYPOGRAPHY.fontSizeXs,
+    fontWeight: '500',
+    marginTop: 4,
+  },
+  waterQuickAddBtn: {
+    backgroundColor: colors.primary + '18',
+    borderColor: colors.primary + '40',
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: RADIUS.full,
+  },
+  waterQuickAddBtnText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  waterProgressBarBg: {
+    height: 8,
+    backgroundColor: colors.surfaceBorder + '44',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  waterProgressBarFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  headerPharmacyBtn: {
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1, borderColor: colors.surfaceBorder,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  warningCardPharmacyBtn: {
+    flex: 1.2,
+    backgroundColor: colors.primary + '18',
+    borderRadius: RADIUS.md,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.primary + '44',
+  },
+  warningCardPharmacyBtnText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: colors.primaryLight,
   },
 });

@@ -105,8 +105,39 @@ export const MEDICATION_TYPES = [
   { label: 'Diğer', value: 'other', icon: '🔵' },
 ] as const;
 
-// Doz birimleri
-export const DOSE_UNITS = ['tablet', 'kapsül', 'mg', 'ml', 'mcg', 'g', 'IU', 'damla'] as const;
+// Doz Birimleri Sabitleri
+export const DOSE_UNIT_TABLET = 'tablet';
+export const DOSE_UNIT_KAPSUL = 'kapsül';
+export const DOSE_UNIT_DAMLA = 'damla';
+export const DOSE_UNIT_PUF = 'puf';
+export const DOSE_UNIT_DOZ = 'doz';
+export const DOSE_UNIT_OLCEK = 'ölçek';
+export const DOSE_UNIT_UYGULAMA = 'uygulama';
+export const DOSE_UNIT_ADET = 'adet';
+
+// Doz birimleri listesi
+export const DOSE_UNITS = [
+  DOSE_UNIT_TABLET,
+  DOSE_UNIT_KAPSUL,
+  DOSE_UNIT_DAMLA,
+  DOSE_UNIT_PUF,
+  DOSE_UNIT_DOZ,
+  DOSE_UNIT_OLCEK,
+  DOSE_UNIT_UYGULAMA,
+  DOSE_UNIT_ADET
+] as const;
+
+// İlaç Türüne Göre Kullanılabilecek Doz Birimleri Eşleşmesi
+export const MEDICATION_TYPE_UNITS: Record<string, readonly string[]> = {
+  tablet: [DOSE_UNIT_TABLET, DOSE_UNIT_KAPSUL],
+  injection: [DOSE_UNIT_DOZ],
+  syrup: [DOSE_UNIT_OLCEK],
+  cream: [DOSE_UNIT_UYGULAMA, DOSE_UNIT_DOZ],
+  drop: [DOSE_UNIT_DAMLA],
+  spray: [DOSE_UNIT_PUF],
+  patch: [DOSE_UNIT_ADET],
+  other: [DOSE_UNIT_DOZ, DOSE_UNIT_ADET],
+} as const;
 
 // Sıklık seçenekleri (Günde X Kez)
 export const FREQUENCY_OPTIONS = [
@@ -153,3 +184,19 @@ export const MIN_BARCODE_LENGTH = 8;
 export const MAX_BARCODE_LENGTH = 15;
 export const STOCK_THRESHOLD_CRITICAL = 5;
 export const STOCK_THRESHOLD_WARNING = 10;
+
+// İlaç Alım Durum Sabitleri
+export const STATUS_TAKEN = 'taken';
+export const STATUS_POSTPONED = 'postponed';
+export const STATUS_MISSED = 'missed';
+export const STATUS_PENDING = 'pending';
+export const STATUS_OVERDUE = 'overdue';
+export const STATUS_UPCOMING = 'upcoming';
+export const STATUS_FINISHED = 'finished';
+
+// Cinsiyet Sabitleri
+export const GENDER_MALE = 'male';
+export const GENDER_FEMALE = 'female';
+export const GENDER_OTHER = 'other';
+
+

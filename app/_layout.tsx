@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef } from 'react';
-import { View, ActivityIndicator, AppState, AppStateStatus } from 'react-native';
-import { Stack } from 'expo-router';
+import { View, ActivityIndicator, AppState, AppStateStatus, StyleSheet } from 'react-native';
+import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../services/firebase';
-import { getProfiles, getMedications, getMedicationLogs, addMedicationLog } from '../services/firestore';
+import { getProfiles, getMedications, getMedicationLogs, addMedicationLog, getDailyHealthLogs, createProfile, addMedication, upsertDailyHealthLog } from '../services/firestore';
 import {
   requestNotificationPermission,
   scheduleMedicationNotification,
@@ -32,13 +32,22 @@ function getTodayStr(): string {
   return new Date().toISOString().split('T')[0];
 }
 
+function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout')), timeoutMs)
+    ),
+  ]);
+}
+
 export default function RootLayout() {
   const {
     user, setUser, setProfiles, setMedications, setMedicationLogs, setActiveProfileId,
-    medications, medicationLogs, addMedicationLogState,
+    medications, medicationLogs, addMedicationLogState, updateMedicationLogState,
     theme, language, profiles,
     quietHoursStart, notificationsEnabled, autoMarkMissedAsTaken,
-    hasHydrated,
+    hasHydrated, setDailyHealthLogs,
   } = useStore();
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -143,10 +152,13 @@ export default function RootLayout() {
               takenAt,
               status: status as 'taken' | 'missed',
             };
-            const newLog = { id: 'local_eod_' + Date.now() + '_' + med.id + '_' + time.replace(':', ''), ...logData };
+            const tempId = 'local_eod_' + Date.now() + '_' + med.id + '_' + time.replace(':', '');
+            const newLog = { id: tempId, ...logData };
             addMedicationLogState(newLog);
             // Firestore'a da kaydet (arka planda, hata olursa sessiz geç)
-            addMedicationLog(logData).catch(() => {});
+            addMedicationLog(logData).then((dbLog) => {
+              updateMedicationLogState(tempId, { id: dbLog.id });
+            }).catch(() => {});
           }
         }
       }
@@ -181,36 +193,111 @@ export default function RootLayout() {
     return () => subscription.remove();
   }, []);
 
+  const syncLocalDataToFirestore = async (userId: string) => {
+    const state = useStore.getState();
+    const profilesToSync = state.profiles.filter(p => p.id.startsWith('local_prof_'));
+    const medsToSync = state.medications.filter(m => m.id.startsWith('local_med_'));
+    const logsToSync = state.medicationLogs.filter(l => l.id.startsWith('local_log_') || l.id.startsWith('temp_') || l.id.startsWith('local_eod_'));
+
+    const profileIdMap: Record<string, string> = {};
+    const medIdMap: Record<string, string> = {};
+
+    // 1. Sync Profiles
+    for (const localProf of profilesToSync) {
+      try {
+        const { id, createdAt, ...profileData } = localProf as any;
+        const newProf = await createProfile(userId, profileData);
+        profileIdMap[id] = newProf.id;
+      } catch (err) {
+        // fail silently
+      }
+    }
+
+    // 2. Sync Medications
+    for (const localMed of medsToSync) {
+      try {
+        const { id, createdAt, ...medData } = localMed as any;
+        if (medData.profileId.startsWith('local_prof_')) {
+          medData.profileId = profileIdMap[medData.profileId] || medData.profileId;
+        }
+        medData.userId = userId;
+        const newMed = await addMedication(medData);
+        medIdMap[id] = newMed.id;
+      } catch (err) {
+        // fail silently
+      }
+    }
+
+    // 3. Sync Medication Logs
+    for (const localLog of logsToSync) {
+      try {
+        const { id, createdAt, ...logData } = localLog;
+        if (logData.profileId.startsWith('local_prof_')) {
+          logData.profileId = profileIdMap[logData.profileId] || logData.profileId;
+        }
+        if (logData.medicationId.startsWith('local_med_')) {
+          logData.medicationId = medIdMap[logData.medicationId] || logData.medicationId;
+        }
+        await addMedicationLog(logData);
+      } catch (err) {
+        // fail silently
+      }
+    }
+
+    // 4. Fetch everything to refresh Zustand store
+    const userProfiles = await getProfiles(userId);
+    if (userProfiles.length > 0) {
+      setProfiles(userProfiles);
+      const activeProfExists = userProfiles.some(p => p.id === state.activeProfileId);
+      if (!activeProfExists || !state.activeProfileId) {
+        setActiveProfileId(userProfiles[0].id);
+      }
+
+      let allMeds: any[] = [];
+      let allLogs: any[] = [];
+      let allHealthLogs: any[] = [];
+      for (const p of userProfiles) {
+        const meds = await getMedications(p.id, null);
+        allMeds = [...allMeds, ...meds];
+        const logs = await getMedicationLogs(p.id);
+        allLogs = [...allLogs, ...logs];
+        const hLogs = await getDailyHealthLogs(p.id);
+        allHealthLogs = [...allHealthLogs, ...hLogs];
+      }
+      setMedications(allMeds);
+      setMedicationLogs(allLogs);
+      setDailyHealthLogs(allHealthLogs);
+    }
+  };
+
   // ---- 1. Firestore Senkronizasyon (Hydration sonrası ve Giriş Yapılmışsa) ----
   useEffect(() => {
     const syncData = async () => {
       const state = useStore.getState();
       if (!state.user?.uid || !hasHydrated) return;
+      const userId = state.user.uid;
 
-      // Eğer local store'da ilaç yoksa (ilk açılış veya temiz kurulum), Firestore'dan çek
-      if (state.medications.length === 0) {
-        setIsSyncing(true);
-        try {
-          const userProfiles = await getProfiles(state.user.uid);
-          if (userProfiles.length > 0) {
-            setProfiles(userProfiles);
-            setActiveProfileId(userProfiles[0].id);
-
-            let allMeds: any[] = [];
-            let allLogs: any[] = [];
-            for (const p of userProfiles) {
-              const meds = await getMedications(p.id, null);
-              allMeds = [...allMeds, ...meds];
-              const logs = await getMedicationLogs(p.id);
-              allLogs = [...allLogs, ...logs];
-            }
-            setMedications(allMeds);
-            setMedicationLogs(allLogs);
-          }
-        } catch (_syncErr) {
-        } finally {
-          setIsSyncing(false);
+      setIsSyncing(true);
+      try {
+        await promiseWithTimeout(
+          syncLocalDataToFirestore(userId),
+          8000
+        );
+        const currentState = useStore.getState();
+        if (currentState.profiles.length > 0) {
+          router.replace('/(tabs)');
+        } else {
+          router.replace('/onboarding');
         }
+      } catch (_syncErr) {
+        const currentState = useStore.getState();
+        if (currentState.profiles.length > 0) {
+          router.replace('/(tabs)');
+        } else {
+          router.replace('/onboarding');
+        }
+      } finally {
+        setIsSyncing(false);
       }
     };
     syncData();
@@ -261,31 +348,40 @@ export default function RootLayout() {
     };
   }, []);
 
-  if (!isAuthReady || isSyncing) {
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
-  }
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <Stack screenOptions={{ 
-          headerShown: false, 
-          animation: 'fade',
-          contentStyle: { backgroundColor: colors.background }
-        }}>
-          <Stack.Screen name="login" />
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="add-medication" options={{ animation: 'slide_from_bottom' }} />
-          <Stack.Screen name="add-profile" options={{ animation: 'slide_from_bottom' }} />
-          <Stack.Screen name="medication-detail" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="profile-settings" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="archive" options={{ animation: 'slide_from_right' }} />
-        </Stack>
+        <View style={{ flex: 1 }}>
+          <Stack screenOptions={{ 
+            headerShown: false, 
+            animation: 'fade',
+            contentStyle: { backgroundColor: colors.background }
+          }}>
+            <Stack.Screen name="login" />
+            <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="add-medication" options={{ animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="add-profile" options={{ animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="medication-detail" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="profile-settings" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="archive" options={{ animation: 'slide_from_right' }} />
+          </Stack>
+
+          {(!isAuthReady || isSyncing) && (
+            <View style={[
+              StyleSheet.absoluteFillObject,
+              {
+                backgroundColor: colors.background,
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 9999,
+              }
+            ]}>
+              <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+          )}
+        </View>
         <GlobalAlert />
       </SafeAreaProvider>
     </GestureHandlerRootView>

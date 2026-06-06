@@ -3,5 +3,20 @@
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
+  },
+  "java.import.exclusions": [
+    "**/node_modules/**"
+  ],
+  "kotlin.import.exclusions": [
+    "**/node_modules/**"
+  ],
+  "java.project.resourceFilters": [
+    "node_modules",
+    ".git"
+  ],
+  "gradle.nestedProjects": false,
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.expo": true
   }
 }

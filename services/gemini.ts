@@ -200,7 +200,7 @@ export interface BarcodeMedicationResult {
   name?: string;
   type?: string;     // 'tablet' | 'injection' | 'syrup' | 'cream' | 'drop' | 'spray' | 'patch' | 'other'
   dosage?: string;
-  unit?: string;     // 'tablet' | 'kapsül' | 'mg' | 'ml' | 'mcg' | 'g' | 'IU' | 'damla'
+  unit?: string;     // 'tablet' | 'kapsül' | 'damla' | 'puf' | 'doz' | 'ölçek' | 'uygulama' | 'adet'
   strength?: string;
   notes?: string;
 }
@@ -209,12 +209,19 @@ export interface BarcodeMedicationResult {
 export const identifyMedicationByBarcode = async (
   barcode: string,
   lang: LanguageCode = 'tr',
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  rejectedNames?: string[]
 ): Promise<BarcodeMedicationResult> => {
   // 1. Önce internetten ismi kazımayı dene
   let scrapedName = await fetchFromBarkodOku(barcode, signal);
   if (!scrapedName) {
     scrapedName = await fetchFromYahoo(barcode, signal);
+  }
+
+  let rejectPrompt = '';
+  if (rejectedNames && rejectedNames.length > 0) {
+    const namesStr = rejectedNames.map(n => `"${n}"`).join(', ');
+    rejectPrompt = `\n\nCRITICAL WRONG MATCH WARNING: The user has indicated that the barcode "${barcode}" does NOT correspond to any of the following products: ${namesStr}. You MUST NOT return any of these names. Please perform a fresh lookup and find the correct medication name.`;
   }
 
   let prompt = '';
@@ -227,14 +234,14 @@ Respond ONLY with a valid JSON object matching the following structure:
   "name": string (the official trade name of the medicine, e.g. "Arveles" or "Parol", capitalized nicely, excluding package count or strength if possible, or null if not a medicine),
   "type": string (must be one of: 'tablet', 'injection', 'syrup', 'cream', 'drop', 'spray', 'patch', 'other', or null if not a medicine),
   "dosage": string (typical single dose quantity, e.g. "1" or "500", or null if not a medicine),
-  "unit": string (must be one of: 'tablet', 'kapsül', 'mg', 'ml', 'mcg', 'g', 'IU', 'damla', or null if not a medicine),
+  "unit": string (must be one of: 'tablet', 'kapsül', 'damla', 'puf', 'doz', 'ölçek', 'uygulama', 'adet', or null if not a medicine),
   "strength": string (strength/concentration description e.g. "500 mg" or "25 mg" or "20 mg/ml", or null if not a medicine),
   "notes": string (short description or active ingredients of the drug, or null if not a medicine)
 }
 CRITICAL INSTRUCTIONS:
 1. Use the provided product name "${scrapedName}" to extract the medication name, strength, unit, and type.
 2. The "name" field should be the clean brand name (e.g., if product name is "ARVELES 25 MG 20 FİLM TABLET", name should be "Arveles").
-3. Do not write any explanations before or after the JSON. Only return the JSON.`;
+3. Do not write any explanations before or after the JSON. Only return the JSON.${rejectPrompt}`;
   } else {
     prompt = `You are a professional pharmacology assistant. Analyze the barcode number "${barcode}".
 Determine if this barcode corresponds to a known human medication (drug/medicine), vaccine, or supplement.
@@ -244,7 +251,7 @@ Respond ONLY with a valid JSON object matching the following structure:
   "name": string (the official trade name of the medicine, capitalized nicely, or null if not a medicine),
   "type": string (must be one of: 'tablet', 'injection', 'syrup', 'cream', 'drop', 'spray', 'patch', 'other', or null if not a medicine),
   "dosage": string (typical single dose quantity, e.g. "1" or "500", or null if not a medicine),
-  "unit": string (must be one of: 'tablet', 'kapsül', 'mg', 'ml', 'mcg', 'g', 'IU', 'damla', or null if not a medicine),
+  "unit": string (must be one of: 'tablet', 'kapsül', 'damla', 'puf', 'doz', 'ölçek', 'uygulama', 'adet', or null if not a medicine),
   "strength": string (strength/concentration description e.g. "500 mg" or "20 mg/ml", or null if not a medicine),
   "notes": string (short description or active ingredients of the drug, or null if not a medicine)
 }
@@ -252,7 +259,7 @@ CRITICAL INSTRUCTIONS:
 1. Do not hallucinate or guess a drug name if you are not certain. If you don't know the exact medication for this barcode, return {"isMedication": false}.
 2. For Turkish barcodes (usually starting with 869 or 868), search for Turkish drugs registered by the Turkish Ministry of Health (TITCK) or popular Turkish supplements.
 3. Do not match non-medication products like food supplements, cosmetics, or food to a prescription/OTC drug. If it is a food supplement or vitamin, and you have its exact name, you can return {"isMedication": true, "name": "Exact Supplement Name", ...} but NEVER guess a different drug name. If it is not a medicine or supplement, return {"isMedication": false}.
-4. Do not write any explanations before or after the JSON. Only return the JSON.`;
+4. Do not write any explanations before or after the JSON. Only return the JSON.${rejectPrompt}`;
   }
 
   try {
@@ -274,4 +281,16 @@ CRITICAL INSTRUCTIONS:
     }
     return { isMedication: false };
   }
+};
+
+// Sağlık Kayıtları Analizi ve Öngörüler Al
+export const getGeminiHealthInsights = async (
+  logsSummary: string,
+  lang: LanguageCode = 'tr'
+): Promise<string> => {
+  const prompt = lang === 'en'
+    ? `You are an expert health advisor. Analyze the following 7-day health tracking logs (which include daily water intake, mood levels, sleep hours/quality, weight, and medication adherence logs):\n\n${logsSummary}\n\nProvide a beautifully structured health report in English, highlighting key observations, patterns (e.g. how sleep quality affects mood or medication adherence), and 3 actionable wellness recommendations. Keep it concise, friendly, and structured. Add a disclaimer that this is not medical advice.`
+    : `Sen uzman bir sağlık danışmanısın. Aşağıdaki 7 günlük sağlık takip kayıtlarını (günlük su tüketimi, ruh hali seviyeleri, uyku saatleri/kalitesi, kilo ve ilaç alım uyumu verilerini) analiz et:\n\n${logsSummary}\n\nKullanıcı için Türkçe, şık bir şekilde yapılandırılmış bir sağlık raporu sun. Önemli gözlemleri, kalıpları (örneğin uyku kalitesinin ruh halini veya ilaç alım uyumunu nasıl etkilediğini) ve 3 adet uygulanabilir sağlıklı yaşam tavsiyesini belirt. Kısa, samimi ve başlıklar halinde olsun. En sona bunun tıbbi bir tavsiye olmadığı uyarısını ekle.`;
+
+  return callGemini(prompt);
 };

@@ -1,18 +1,21 @@
 import { useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput,
-  TouchableOpacity, Alert, ActivityIndicator, ScrollView,
+  TouchableOpacity, Alert, ActivityIndicator, ScrollView, Image,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import { useStore } from '../store/useStore';
 import { createProfile } from '../services/firestore';
-import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, AVATAR_OPTIONS } from '../constants/AppConstants';
+import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, AVATAR_OPTIONS, GENDER_MALE, GENDER_FEMALE, GENDER_OTHER } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
 import { calculateBmi } from '../utils/bmi';
 
 export default function AddProfileScreen() {
   const { user, addProfile, profiles, setActiveProfileId, theme, language } = useStore();
   const [name, setName] = useState('');
+  const [gender, setGender] = useState<'female' | 'male' | 'other'>(GENDER_FEMALE);
   const [age, setAge] = useState('');
   const [height, setHeight] = useState('');
   const [weight, setWeight] = useState('');
@@ -23,6 +26,52 @@ export default function AddProfileScreen() {
   const colors = getThemeColors(theme);
   const lang = language as LanguageCode;
   const styles = getStyles(colors);
+
+  const handlePickImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          lang === 'tr' ? 'İzin Gerekli' : 'Permission Required',
+          lang === 'tr' 
+            ? 'Profil resmi eklemek için galeri iznine ihtiyacımız var.' 
+            : 'We need library permissions to select a profile photo.'
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.6,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const selectedUri = result.assets[0].uri;
+        
+        const manipulated = await ImageManipulator.manipulateAsync(
+          selectedUri,
+          [{ resize: { width: 150, height: 150 } }],
+          {
+            compress: 0.5,
+            format: ImageManipulator.SaveFormat.JPEG,
+            base64: true,
+          }
+        );
+
+        if (manipulated.base64) {
+          const base64Data = `data:image/jpeg;base64,${manipulated.base64}`;
+          setSelectedAvatar(base64Data);
+        }
+      }
+    } catch (err) {
+      Alert.alert(
+        lang === 'tr' ? 'Hata' : 'Error',
+        lang === 'tr' ? 'Fotoğraf seçilirken bir hata oluştu.' : 'An error occurred while selecting the photo.'
+      );
+    }
+  };
 
 
   const handleSave = async () => {
@@ -40,6 +89,7 @@ export default function AddProfileScreen() {
         height: height ? parseFloat(height) : undefined,
         weight: weight ? parseFloat(weight) : undefined,
         targetWeight: targetWeight ? parseFloat(targetWeight) : undefined,
+        gender: gender,
       });
 
       addProfile(newProfile);
@@ -67,7 +117,18 @@ export default function AddProfileScreen() {
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Avatar Seç</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm }}>
+            <Text style={styles.label}>{lang === 'tr' ? 'Avatar / Fotoğraf Seç' : 'Select Avatar / Photo'}</Text>
+            <TouchableOpacity 
+              style={[styles.customPhotoBtn, selectedAvatar.startsWith('data:image/') && styles.customPhotoBtnActive]} 
+              onPress={handlePickImage}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.customPhotoBtnText, { color: selectedAvatar.startsWith('data:image/') ? '#fff' : colors.primary }]}>
+                📸 {lang === 'tr' ? 'Fotoğraf Yükle' : 'Upload Photo'}
+              </Text>
+            </TouchableOpacity>
+          </View>
           <ScrollView 
             horizontal 
             showsHorizontalScrollIndicator={false} 
@@ -95,6 +156,39 @@ export default function AddProfileScreen() {
             placeholder={lang === 'tr' ? 'örn: Ahmet, Anne...' : 'e.g. John, Mom...'}
             placeholderTextColor={colors.textMuted}
           />
+        </View>
+
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>{t(lang, 'profileUpdate.genderLabel')}</Text>
+          <View style={styles.genderOptionsRow}>
+            <TouchableOpacity 
+              style={[styles.genderBtn, gender === GENDER_FEMALE && styles.genderBtnActive]} 
+              onPress={() => setGender(GENDER_FEMALE)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.genderBtnText, gender === GENDER_FEMALE && styles.genderBtnTextActive]}>
+                👩 {t(lang, 'profileUpdate.genderFemale')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.genderBtn, gender === GENDER_MALE && styles.genderBtnActive]} 
+              onPress={() => setGender(GENDER_MALE)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.genderBtnText, gender === GENDER_MALE && styles.genderBtnTextActive]}>
+                👨 {t(lang, 'profileUpdate.genderMale')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.genderBtn, gender === GENDER_OTHER && styles.genderBtnActive]} 
+              onPress={() => setGender(GENDER_OTHER)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.genderBtnText, gender === GENDER_OTHER && styles.genderBtnTextActive]}>
+                👤 {t(lang, 'profileUpdate.genderOther')}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.fieldGroup}>
@@ -157,23 +251,42 @@ export default function AddProfileScreen() {
               borderColor: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color 
             }
           ]}>
-            <Text style={[styles.bmiText, { color: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color }]}>
+            <Text 
+              style={[styles.bmiText, { color: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
               📊 BKİ: {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.bmi} ({calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.category})
             </Text>
           </View>
         )}
 
         <View style={styles.previewCard}>
-          <Text style={styles.previewEmoji}>{selectedAvatar}</Text>
+          {selectedAvatar.startsWith('data:image/') ? (
+            <Image source={{ uri: selectedAvatar }} style={{ width: 80, height: 80, borderRadius: 40, marginBottom: SPACING.sm }} />
+          ) : (
+            <Text style={styles.previewEmoji}>{selectedAvatar}</Text>
+          )}
           <Text style={styles.previewName}>{name || 'Profil Adı'}</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: SPACING.sm, marginTop: 4 }}>
-            {age ? <Text style={styles.previewAge}>{age} yaşında</Text> : null}
+            <Text style={styles.previewAge}>
+              {gender === GENDER_FEMALE 
+                ? t(lang, 'profileUpdate.genderFemale') 
+                : gender === GENDER_MALE 
+                  ? t(lang, 'profileUpdate.genderMale') 
+                  : t(lang, 'profileUpdate.genderOther')}
+            </Text>
+            {age ? <Text style={styles.previewAge}>• {age} yaşında</Text> : null}
             {height ? <Text style={styles.previewAge}>• {height} cm</Text> : null}
             {weight ? <Text style={styles.previewAge}>• {weight} kg</Text> : null}
             {targetWeight ? <Text style={styles.previewAge}>• Hedef: {targetWeight} kg</Text> : null}
           </View>
           {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang) && (
-            <Text style={[styles.previewAge, { color: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color, fontWeight: 'bold', marginTop: 4 }]}>
+            <Text 
+              style={[styles.previewAge, { color: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color, fontWeight: 'bold', marginTop: 4 }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
               BKİ: {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.bmi} ({calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.category})
             </Text>
           )}
@@ -252,6 +365,49 @@ const getStyles = (colors: any) => StyleSheet.create({
   },
   bmiText: {
     fontSize: TYPOGRAPHY.fontSizeMd,
+    fontWeight: 'bold',
+  },
+  genderOptionsRow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginTop: 4,
+  },
+  genderBtn: {
+    flex: 1,
+    backgroundColor: colors.surfaceBorder + '22',
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  genderBtnActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '18',
+  },
+  genderBtnText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: colors.textSecondary,
+  },
+  genderBtnTextActive: {
+    color: colors.primary,
+  },
+  customPhotoBtn: {
+    backgroundColor: colors.primary + '15',
+    borderColor: colors.primary + '40',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: RADIUS.md,
+  },
+  customPhotoBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  customPhotoBtnText: {
+    fontSize: 12,
     fontWeight: 'bold',
   },
 });

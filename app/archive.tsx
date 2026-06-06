@@ -53,7 +53,7 @@ export default function ArchiveScreen() {
               removeMedication(med.id);
               await deleteMedication(med.id);
             } catch (err) {
-              console.log('Med deletion error:', err);
+              // Hata sessizce yutulur
             }
           },
         },
@@ -79,7 +79,7 @@ export default function ArchiveScreen() {
               }
               setSelectedMeds([]);
             } catch (err) {
-              console.log('Bulk deletion error:', err);
+              // Hata sessizce yutulur
             }
           },
         },
@@ -92,10 +92,9 @@ export default function ArchiveScreen() {
   };
 
   const getTranslatedUnit = (u: string) => {
-    if (u === 'tablet' || u === 'kapsül' || u === 'damla') {
-      return t(lang, `medicationOptions.units.${u}`);
-    }
-    return u;
+    const translationKey = `medicationOptions.units.${u}`;
+    const translated = t(lang, translationKey);
+    return translated === translationKey ? u : translated;
   };
 
   const filteredMeds = archivedMeds.filter(m => 

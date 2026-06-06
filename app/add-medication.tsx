@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput,
-  TouchableOpacity, Alert, ActivityIndicator, Modal, Platform,
+  TouchableOpacity, Alert, ActivityIndicator, Modal, Platform, Image,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -14,7 +14,7 @@ import {
   MEDICATION_TYPES, DOSE_UNITS, FREQUENCY_OPTIONS, INTERVAL_OPTIONS,
   RECORD_TYPE_MEDICATION, RECORD_TYPE_VACCINE, DEFAULT_VACCINE_TIME,
   DEFAULT_VACCINE_DOSAGE, DEFAULT_VACCINE_UNIT, MIN_BARCODE_LENGTH,
-  MAX_BARCODE_LENGTH
+  MAX_BARCODE_LENGTH, MEDICATION_TYPE_UNITS, DOSE_UNIT_DOZ
 } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
 import { formatDate, getLocalDateString } from '../utils/date';
@@ -48,20 +48,20 @@ const COMMON_MEDICATIONS = [
 
 export default function AddMedicationScreen() {
   const { id, templateId } = useLocalSearchParams<{ id?: string, templateId?: string }>();
-  const { 
-    user, activeProfileId, profiles, medications, 
-    addMedication: addMedToStore, updateMedication: updateMedInStore, 
-    language, theme, showAlert, globalMedications, setGlobalMedications 
+  const {
+    user, activeProfileId, profiles, medications,
+    addMedication: addMedToStore, updateMedication: updateMedInStore,
+    language, theme, showAlert, globalMedications, setGlobalMedications
   } = useStore();
-  
+
   const colors = getThemeColors(theme);
   const styles = getStyles(colors);
-  
+
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
   const lang = language as LanguageCode;
 
-  const existingMed = id ? medications.find(m => m.id === id) : 
-                     templateId ? medications.find(m => m.id === templateId) : null;
+  const existingMed = id ? medications.find(m => m.id === id) :
+    templateId ? medications.find(m => m.id === templateId) : null;
   const isEditMode = !!existingMed && !templateId;
 
   const [recordType, setRecordType] = useState<'medication' | 'vaccine'>(
@@ -76,7 +76,27 @@ export default function AddMedicationScreen() {
   const [strength, setStrength] = useState(existingMed?.strength || '');
   const [type, setType] = useState<string>(existingMed?.type || MEDICATION_TYPES[0].value);
   const [dosage, setDosage] = useState(existingMed?.dosage || '1');
-  const [unit, setUnit] = useState<string>(existingMed?.unit || DOSE_UNITS[0]);
+
+  const getNormalizedUnit = (medType: string, medUnit: string): string => {
+    const allowed = MEDICATION_TYPE_UNITS[medType];
+    if (!allowed || allowed.length === 0) return DOSE_UNIT_DOZ;
+    if (allowed.includes(medUnit)) return medUnit;
+    return allowed[0];
+  };
+
+  const getInitialUnit = () => {
+    if (existingMed?.unit) {
+      const removedUnits = ['mg', 'ml', 'mcg', 'g', 'IU'];
+      if (!removedUnits.includes(existingMed.unit)) {
+        return existingMed.unit;
+      }
+    }
+    const initialType = existingMed?.type || MEDICATION_TYPES[0].value;
+    const allowed = MEDICATION_TYPE_UNITS[initialType];
+    return allowed ? allowed[0] : DOSE_UNIT_DOZ;
+  };
+
+  const [unit, setUnit] = useState<string>(getInitialUnit());
   const [intervalDays, setIntervalDays] = useState<number>(existingMed?.intervalDays || 1);
   const [frequency, setFrequency] = useState(existingMed ? existingMed.times.length : 1);
   const [times, setTimes] = useState(existingMed?.times || ['08:00']);
@@ -97,6 +117,8 @@ export default function AddMedicationScreen() {
   const [manualBarcode, setManualBarcode] = useState('');
   const [isSearchingBarcode, setIsSearchingBarcode] = useState(false);
   const [scanned, setScanned] = useState(false);
+  const [barcodeSearchCount, setBarcodeSearchCount] = useState(0);
+  const [rejectedNames, setRejectedNames] = useState<string[]>([]);
   const [permission, requestPermission] = useCameraPermissions();
   const [selectedPickerDate, setSelectedPickerDate] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -126,9 +148,9 @@ export default function AddMedicationScreen() {
   };
 
   const openStartDatePicker = () => {
-     setSelectedPickerDate(startDate);
-     setAndroidMonthView(new Date(startDate || new Date()));
-     setShowStartDatePicker(true);
+    setSelectedPickerDate(startDate);
+    setAndroidMonthView(new Date(startDate || new Date()));
+    setShowStartDatePicker(true);
   };
 
   const addDateSlot = () => {
@@ -191,9 +213,9 @@ export default function AddMedicationScreen() {
 
     if (text.length > 1) {
       // Check for active duplicate name (for the same profile)
-      const activeDuplicate = medications.find(m => 
-        m.name.trim().toLowerCase() === text.trim().toLowerCase() && 
-        m.profileId === activeProfileId && 
+      const activeDuplicate = medications.find(m =>
+        m.name.trim().toLowerCase() === text.trim().toLowerCase() &&
+        m.profileId === activeProfileId &&
         m.isActive !== false &&
         m.id !== id
       );
@@ -208,16 +230,16 @@ export default function AddMedicationScreen() {
 
       // Önerileri filtrele (Yerel + Küresel)
       const allKnownMeds = Array.from(new Set([...COMMON_MEDICATIONS, ...(globalMedications || [])]));
-      const filtered = allKnownMeds.filter(m => 
-        m.toLowerCase().includes(text.toLowerCase()) && 
+      const filtered = allKnownMeds.filter(m =>
+        m.toLowerCase().includes(text.toLowerCase()) &&
         m.toLowerCase() !== text.toLowerCase()
       ).slice(0, 6);
       setSuggestions(filtered);
 
       // Arşivde var mı kontrol et
-      const archivedMatch = medications.find(m => 
-        m.name.toLowerCase() === text.toLowerCase() && 
-        m.profileId === activeProfileId && 
+      const archivedMatch = medications.find(m =>
+        m.name.toLowerCase() === text.toLowerCase() &&
+        m.profileId === activeProfileId &&
         m.isActive === false
       );
       if (archivedMatch) {
@@ -228,7 +250,11 @@ export default function AddMedicationScreen() {
     }
   };
 
-  const handleBarcodeLookup = async (code: string) => {
+  const handleBarcodeLookup = async (
+    code: string,
+    currentRejectedNames: string[] = [],
+    currentSearchCount = 0
+  ) => {
     const trimmedCode = code.trim();
     if (!trimmedCode) return;
 
@@ -240,8 +266,11 @@ export default function AddMedicationScreen() {
 
     setIsSearchingBarcode(true);
     try {
-      // 1. Önce lokal/global Firestore veritabanımızdan kontrol et
-      const cachedMed = await getMedicationByBarcode(trimmedCode, user?.uid || 'guest');
+      // 1. Önce lokal/global Firestore veritabanımızdan kontrol et (Yalnızca ilk aramada)
+      let cachedMed = null;
+      if (currentSearchCount === 0) {
+        cachedMed = await getMedicationByBarcode(trimmedCode, user?.uid || 'guest');
+      }
       if (controller.signal.aborted) return;
 
       if (cachedMed) {
@@ -260,6 +289,8 @@ export default function AddMedicationScreen() {
               onPress: () => {
                 setScanned(false);
                 setManualBarcode('');
+                setBarcodeSearchCount(0);
+                setRejectedNames([]);
               }
             },
             {
@@ -267,12 +298,14 @@ export default function AddMedicationScreen() {
               onPress: () => {
                 setBarcode(trimmedCode);
                 setName(cachedMed.name);
-                setType(cachedMed.type || MEDICATION_TYPES[0].value);
+                const targetType = cachedMed.type || MEDICATION_TYPES[0].value;
+                setType(targetType);
                 setDosage(cachedMed.dosage || '1');
-                setUnit(cachedMed.unit || DOSE_UNITS[0]);
+                setUnit(getNormalizedUnit(targetType, cachedMed.unit || ''));
                 setStrength(cachedMed.strength || '');
-                // Notlar alanına herhangi bir veri eklemiyoruz
                 setShowBarcodeModal(false);
+                setBarcodeSearchCount(0);
+                setRejectedNames([]);
               }
             }
           ]
@@ -280,8 +313,8 @@ export default function AddMedicationScreen() {
         return;
       }
 
-      // 2. Veritabanında yoksa, Gemini API'ye sor
-      const result = await identifyMedicationByBarcode(trimmedCode, lang, controller.signal);
+      // 2. Veritabanında yoksa veya önceki eşleşme reddedildiyse Gemini API'ye sor
+      const result = await identifyMedicationByBarcode(trimmedCode, lang, controller.signal, currentRejectedNames);
       if (controller.signal.aborted) return;
 
       if (result.isMedication && result.name) {
@@ -290,37 +323,35 @@ export default function AddMedicationScreen() {
         const confirmMsgTr = `Doğrulanan İlaç:\n💊 ${result.name} ${result.strength ? `(${result.strength})` : ''}\n\nAradığınız ilaç bu mu?`;
         const confirmMsgEn = `Verified Medication:\n💊 ${result.name} ${result.strength ? `(${result.strength})` : ''}\n\nIs this the medicine you are looking for?`;
 
+        const nextCount = currentSearchCount + 1;
+
         showAlert({
           message: lang === 'tr' ? confirmMsgTr : confirmMsgEn,
           type: 'info',
           buttons: [
-            {
-              text: lang === 'tr' ? 'Hayır' : 'No',
-              style: 'cancel',
-              onPress: () => {
-                setScanned(false);
-                setManualBarcode('');
-              }
-            },
             {
               text: lang === 'tr' ? 'Evet, Doldur' : 'Yes, Populate',
               onPress: async () => {
                 const finalName = result.name || '';
                 setBarcode(trimmedCode);
                 setName(finalName);
-                if (result.type) setType(result.type);
+                const finalType = result.type || type;
+                if (result.type) setType(finalType);
                 if (result.dosage) setDosage(result.dosage);
-                if (result.unit) setUnit(result.unit);
+                if (result.unit) {
+                  setUnit(getNormalizedUnit(finalType, result.unit));
+                } else {
+                  setUnit(MEDICATION_TYPE_UNITS[finalType]?.[0] || DOSE_UNIT_DOZ);
+                }
                 if (result.strength) setStrength(result.strength);
-                // Notlar alanına herhangi bir veri eklemiyoruz
 
                 // Sisteme kaydet (Veritabanımıza ekle)
                 await saveMedicationBarcode(user?.uid || 'guest', {
                   barcode: trimmedCode,
                   name: finalName,
-                  type: result.type || type,
+                  type: finalType,
                   dosage: result.dosage || dosage,
-                  unit: result.unit || unit,
+                  unit: result.unit ? getNormalizedUnit(finalType, result.unit) : (MEDICATION_TYPE_UNITS[finalType]?.[0] || DOSE_UNIT_DOZ),
                   strength: result.strength || '',
                   notes: result.notes || '',
                 });
@@ -329,6 +360,48 @@ export default function AddMedicationScreen() {
                 await addGlobalMedication(finalName);
 
                 setShowBarcodeModal(false);
+                setBarcodeSearchCount(0);
+                setRejectedNames([]);
+              }
+            },
+            {
+              text: lang === 'tr' ? 'Yanlış, Tekrar Ara' : 'Wrong, Search Again',
+              style: 'default',
+              onPress: () => {
+                if (nextCount >= 5) {
+                  showAlert({
+                    message: lang === 'tr'
+                      ? 'Maksimum deneme sayısına (5) ulaştınız. Lütfen bilgileri manuel olarak doldurun.'
+                      : 'You have reached the maximum search attempts (5). Please enter details manually.',
+                    type: 'warning',
+                    buttons: [
+                      {
+                        text: lang === 'tr' ? 'Tamam' : 'OK',
+                        onPress: () => {
+                          setScanned(false);
+                          setManualBarcode('');
+                          setBarcodeSearchCount(0);
+                          setRejectedNames([]);
+                        }
+                      }
+                    ]
+                  });
+                } else {
+                  setBarcodeSearchCount(nextCount);
+                  const updatedRejected = [...currentRejectedNames, result.name || ''];
+                  setRejectedNames(updatedRejected);
+                  handleBarcodeLookup(trimmedCode, updatedRejected, nextCount);
+                }
+              }
+            },
+            {
+              text: lang === 'tr' ? 'Vazgeç / İptal Et' : 'Cancel',
+              style: 'cancel',
+              onPress: () => {
+                setScanned(false);
+                setManualBarcode('');
+                setBarcodeSearchCount(0);
+                setRejectedNames([]);
               }
             }
           ]
@@ -336,8 +409,8 @@ export default function AddMedicationScreen() {
       } else {
         // İlaç bulunamadı/doğrulanamadı
         showAlert({
-          message: lang === 'tr' 
-            ? 'Bu barkod geçerli bir ilaca ait görünmüyor. Barkodu kontrol edip tekrar deneyebilir veya manuel giriş yapabilirsiniz.' 
+          message: lang === 'tr'
+            ? 'Bu barkod geçerli bir ilaca ait görünmüyor. Barkodu kontrol edip tekrar deneyebilir veya manuel giriş yapabilirsiniz.'
             : 'This barcode does not seem to belong to a valid medication. You can check the barcode or enter details manually.',
           type: 'warning',
           buttons: [
@@ -346,6 +419,8 @@ export default function AddMedicationScreen() {
               onPress: () => {
                 setScanned(false);
                 setManualBarcode('');
+                setBarcodeSearchCount(0);
+                setRejectedNames([]);
               }
             }
           ]
@@ -353,12 +428,12 @@ export default function AddMedicationScreen() {
       }
     } catch (err: any) {
       if (err.name === 'AbortError') return;
-      
+
       const isQuota = err.isQuotaError || err.message?.toLowerCase().includes('quota') || err.message?.toLowerCase().includes('exceeded');
       const errorMsg = isQuota
-        ? (lang === 'tr' 
-            ? 'Yapay zeka günlük sorgulama limitine ulaşıldı. Lütfen barkod bilgilerini manuel olarak doldurun.' 
-            : 'AI daily query limit exceeded. Please populate medication details manually.')
+        ? (lang === 'tr'
+          ? 'Yapay zeka günlük sorgulama limitine ulaşıldı. Lütfen barkod bilgilerini manuel olarak doldurun.'
+          : 'AI daily query limit exceeded. Please populate medication details manually.')
         : (lang === 'tr' ? 'Barkod sorgulanırken hata oluştu.' : 'Error querying barcode.');
 
       showAlert({
@@ -370,6 +445,8 @@ export default function AddMedicationScreen() {
             onPress: () => {
               setScanned(false);
               setManualBarcode('');
+              setBarcodeSearchCount(0);
+              setRejectedNames([]);
             }
           }
         ]
@@ -383,15 +460,15 @@ export default function AddMedicationScreen() {
 
   const applyTemplate = (template: any) => {
     // Check if this template's name is already active
-    const activeDuplicate = medications.find(m => 
-      m.name.trim().toLowerCase() === template.name.trim().toLowerCase() && 
-      m.profileId === activeProfileId && 
+    const activeDuplicate = medications.find(m =>
+      m.name.trim().toLowerCase() === template.name.trim().toLowerCase() &&
+      m.profileId === activeProfileId &&
       m.isActive !== false
     );
 
     if (activeDuplicate) {
-        setActiveDuplicateError(template.name);
-        return;
+      setActiveDuplicateError(template.name);
+      return;
     }
     setActiveDuplicateError(null);
 
@@ -399,7 +476,7 @@ export default function AddMedicationScreen() {
     setStrength(template.strength || '');
     setType(template.type);
     setDosage(template.dosage);
-    setUnit(template.unit);
+    setUnit(getNormalizedUnit(template.type, template.unit));
     setIntervalDays(template.intervalDays || 1);
     setFrequency(template.times.length);
     setTimes(template.times);
@@ -439,15 +516,15 @@ export default function AddMedicationScreen() {
     setIsSaving(true);
     try {
       // Check for active duplicate name (for the same profile)
-      const activeDuplicate = medications.find(m => 
-        m.name.trim().toLowerCase() === name.trim().toLowerCase() && 
-        m.profileId === activeProfileId && 
+      const activeDuplicate = medications.find(m =>
+        m.name.trim().toLowerCase() === name.trim().toLowerCase() &&
+        m.profileId === activeProfileId &&
         m.isActive !== false &&
         m.id !== id // Don't block self if we're actually editing this exact medication
       );
 
       if (activeDuplicate) {
-        showAlert({ 
+        showAlert({
           message: lang === 'tr' ? `"${name.trim()}" isminde aktif bir ilacınız zaten var. Lütfen farklı bir isim seçin.` : `You already have an active medication named "${name.trim()}". Please choose a different name.`,
           type: 'danger'
         });
@@ -493,7 +570,7 @@ export default function AddMedicationScreen() {
       if (isEditMode && existingMed) {
         await updateMedication(existingMed.id, medData);
         updateMedInStore(existingMed.id, medData);
-        
+
         await cancelMedicationNotifications(existingMed.id);
         const hasPermission = await requestNotificationPermission();
         if (hasPermission) {
@@ -504,7 +581,7 @@ export default function AddMedicationScreen() {
       } else {
         const newMed = await addMedication(medData);
         addMedToStore(newMed);
-        
+
         const hasPermission = await requestNotificationPermission();
         if (hasPermission) {
           for (const tVal of medData.times) {
@@ -518,8 +595,11 @@ export default function AddMedicationScreen() {
         type: 'success',
         buttons: [{ text: t(lang, 'addMedication.confirmBtn'), onPress: () => router.back() }]
       });
-    } catch (_err) {
-      showAlert({ message: lang === 'tr' ? 'İşlem başarısız oldu' : 'Action failed', type: 'danger' });
+    } catch (err: any) {
+      showAlert({ 
+        message: `${lang === 'tr' ? 'İşlem başarısız oldu' : 'Action failed'}: ${err?.message || err?.code || String(err)}`, 
+        type: 'danger' 
+      });
     } finally {
       setIsSaving(false);
     }
@@ -535,8 +615,9 @@ export default function AddMedicationScreen() {
     return t(lang, `medicationOptions.intervals.${keys[value]}`);
   };
   const getTranslatedUnit = (u: string) => {
-    if (u === 'tablet' || u === 'kapsül' || u === 'damla') return t(lang, `medicationOptions.units.${u}`);
-    return u;
+    const translationKey = `medicationOptions.units.${u}`;
+    const translated = t(lang, translationKey);
+    return translated === translationKey ? u : translated;
   };
 
   return (
@@ -556,8 +637,15 @@ export default function AddMedicationScreen() {
         nestedScrollEnabled={true}
       >
         {activeProfile && (
-          <View style={styles.profileIndicator}>
-            <Text style={styles.profileIndicatorText}>{activeProfile.avatar || '👤'} {activeProfile.name} {t(lang, 'addMedication.profileIndicator')}</Text>
+          <View style={[styles.profileIndicator, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+            {activeProfile.avatar?.startsWith('data:image/') ? (
+              <Image source={{ uri: activeProfile.avatar }} style={{ width: 20, height: 20, borderRadius: 10 }} />
+            ) : (
+              <Text style={{ fontSize: 16 }}>{activeProfile.avatar || '👤'}</Text>
+            )}
+            <Text style={styles.profileIndicatorText}>
+              {activeProfile.name} {t(lang, 'addMedication.profileIndicator')}
+            </Text>
           </View>
         )}
 
@@ -646,8 +734,8 @@ export default function AddMedicationScreen() {
                 placeholderTextColor={colors.textMuted}
                 keyboardType="numeric"
               />
-              <TouchableOpacity 
-                style={[styles.barcodeSearchBtn, barcode.trim().length < MIN_BARCODE_LENGTH && styles.barcodeSearchBtnDisabled]} 
+              <TouchableOpacity
+                style={[styles.barcodeSearchBtn, barcode.trim().length < MIN_BARCODE_LENGTH && styles.barcodeSearchBtnDisabled]}
                 disabled={barcode.trim().length < MIN_BARCODE_LENGTH || isSearchingBarcode}
                 onPress={() => handleBarcodeLookup(barcode)}
                 activeOpacity={0.7}
@@ -658,8 +746,8 @@ export default function AddMedicationScreen() {
                   <Text style={styles.barcodeSearchBtnIcon}>🔍</Text>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.barcodeBtn} 
+              <TouchableOpacity
+                style={styles.barcodeBtn}
                 onPress={() => {
                   setScanned(false);
                   setManualBarcode('');
@@ -710,195 +798,201 @@ export default function AddMedicationScreen() {
         {recordType === 'medication' && (
           <>
             {/* Güç / Seviye --- Opsiyonel */}
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>
-            {lang === 'tr' ? 'Güç / Seviye (Opsiyonel)' : 'Strength (Optional)'}
-          </Text>
-          <TextInput
-            style={styles.input}
-            value={strength}
-            onChangeText={setStrength}
-            placeholder={lang === 'tr' ? 'Örn. 500mg, 20mcg, 10ml' : 'e.g. 500mg, 20mcg, 10ml'}
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="none"
-          />
-        </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>{t(lang, 'addMedication.startDateLabel')}</Text>
-          <TouchableOpacity style={styles.datePickerBtn} onPress={openStartDatePicker} activeOpacity={0.7}>
-            <Text style={styles.datePickerBtnText}>📅 {formatDate(startDate)}</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>{t(lang, 'addMedication.typeLabel')}</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.typeRow}>
-              {MEDICATION_TYPES.map((typeOption) => (
-                <TouchableOpacity
-                  key={typeOption.value}
-                  style={[styles.typeChip, type === typeOption.value && styles.typeChipActive]}
-                  onPress={() => setType(typeOption.value)}
-                >
-                  <Text style={styles.typeChipEmoji}>{typeOption.icon}</Text>
-                  <Text style={[styles.typeChipLabel, type === typeOption.value && styles.typeChipLabelActive]}>
-                    {getTranslatedTypeLabel(typeOption.value)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>
+                {lang === 'tr' ? 'Güç / Seviye (Opsiyonel)' : 'Strength (Optional)'}
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={strength}
+                onChangeText={setStrength}
+                placeholder={lang === 'tr' ? 'Örn. 500mg, 20mcg, 10ml' : 'e.g. 500mg, 20mcg, 10ml'}
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="none"
+              />
             </View>
-          </ScrollView>
-        </View>
 
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>{t(lang, 'addMedication.doseLabel')}</Text>
-          <View style={styles.dosageRow}>
-            <TextInput
-              style={[styles.input, styles.dosageInput]}
-              value={dosage}
-              onChangeText={setDosage}
-              placeholder={t(lang, 'addMedication.dosePlaceholder')}
-              placeholderTextColor={colors.textMuted}
-              keyboardType="numeric"
-            />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.unitScroll}>
-              {DOSE_UNITS.map((u) => (
-                <TouchableOpacity key={u} style={[styles.unitChip, unit === u && styles.unitChipActive]} onPress={() => setUnit(u)}>
-                  <Text style={[styles.unitChipText, unit === u && styles.unitChipTextActive]}>{getTranslatedUnit(u)}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>{t(lang, 'addMedication.frequencyLabel')}</Text>
-          <View style={styles.intervalGrid}>
-            {INTERVAL_OPTIONS.map((opt) => {
-              const isActive = intervalDays === opt.value;
-              const icons: Record<number,string> = { 1: '📅', 2: '🔁', 3: '⏳', 7: '📆' };
-              return (
-                <TouchableOpacity key={opt.value} style={[styles.intervalCard, isActive && styles.intervalCardActive]} onPress={() => setIntervalDays(opt.value)} activeOpacity={0.75}>
-                  <Text style={styles.intervalIcon}>{icons[opt.value] ?? '📅'}</Text>
-                  <Text style={[styles.intervalLabel, isActive && styles.intervalLabelActive]}>{getTranslatedIntervalLabel(opt.value)}</Text>
-                  {isActive && <View style={styles.intervalCheck}><Text style={styles.intervalCheckText}>✓</Text></View>}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>{t(lang, 'addMedication.dailyDoseLabel')}</Text>
-          <View style={styles.freqRow}>
-            {FREQUENCY_OPTIONS.map((f) => (
-              <TouchableOpacity key={f.value} style={[styles.freqChip, frequency === f.value && styles.freqChipActive]} onPress={() => handleFrequencyChange(f.value)}>
-                <Text style={[styles.freqChipText, frequency === f.value && styles.freqChipTextActive]}>{getTranslatedFreqLabel(f.value)}</Text>
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>{t(lang, 'addMedication.startDateLabel')}</Text>
+              <TouchableOpacity style={styles.datePickerBtn} onPress={openStartDatePicker} activeOpacity={0.7}>
+                <Text style={styles.datePickerBtnText}>📅 {formatDate(startDate)}</Text>
               </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+            </View>
 
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>{t(lang, 'addMedication.timesLabel')}</Text>
-          <View style={styles.timeGrid}>
-            {times.map((time, i) => (
-              <TouchableOpacity key={i} style={styles.timePickerBox} onPress={() => openTimePicker(i)} activeOpacity={0.8}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timeLabel}>{i + 1}. {t(lang, 'addMedication.doseIndex')}</Text>
-                  <Text style={styles.timeValueDisplay}>{time}</Text>
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>{t(lang, 'addMedication.typeLabel')}</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={styles.typeRow}>
+                  {MEDICATION_TYPES.map((typeOption) => (
+                    <TouchableOpacity
+                      key={typeOption.value}
+                      style={[styles.typeChip, type === typeOption.value && styles.typeChipActive]}
+                      onPress={() => {
+                        setType(typeOption.value);
+                        const allowed = MEDICATION_TYPE_UNITS[typeOption.value];
+                        if (allowed && allowed.length > 0) {
+                          setUnit(allowed[0]);
+                        }
+                      }}
+                    >
+                      <Text style={styles.typeChipEmoji}>{typeOption.icon}</Text>
+                      <Text style={[styles.typeChipLabel, type === typeOption.value && styles.typeChipLabelActive]}>
+                        {getTranslatedTypeLabel(typeOption.value)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
-                <Text style={styles.timeEditIcon}>🕰️</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-      {/* ----------------- MODERN TIME PICKER MODAL ----------------- */}
-      <Modal transparent animationType="fade" visible={showTimePicker} onRequestClose={() => setShowTimePicker(false)}>
-        <View style={styles.pickerOverlay}>
-          <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
-            <View style={styles.pickerHeader}>
-              <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
-                <Text style={styles.pickerIcon}>🕰️</Text>
-              </View>
-              <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{t(lang, 'addMedication.timePickerTitle')}</Text>
+              </ScrollView>
             </View>
-            <View style={styles.pickerBody}>
-              {Platform.OS === 'ios' ? (
-                <DateTimePicker
-                  value={getDateFromTimeStr(times[activeTimeIndex])}
-                  mode="time"
-                  display="spinner"
-                  is24Hour
-                  onChange={(_, selectedDate) => {
-                    if (selectedDate) {
-                      const h = selectedDate.getHours().toString().padStart(2, '0');
-                      const m = selectedDate.getMinutes().toString().padStart(2, '0');
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>{t(lang, 'addMedication.doseLabel')}</Text>
+              <View style={styles.dosageRow}>
+                <TextInput
+                  style={[styles.input, styles.dosageInput]}
+                  value={dosage}
+                  onChangeText={setDosage}
+                  placeholder={t(lang, 'addMedication.dosePlaceholder')}
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="numeric"
+                />
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.unitScroll}>
+                  {(MEDICATION_TYPE_UNITS[type] || [DOSE_UNIT_DOZ]).map((u) => (
+                    <TouchableOpacity key={u} style={[styles.unitChip, unit === u && styles.unitChipActive]} onPress={() => setUnit(u)}>
+                      <Text style={[styles.unitChipText, unit === u && styles.unitChipTextActive]}>{getTranslatedUnit(u)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>{t(lang, 'addMedication.frequencyLabel')}</Text>
+              <View style={styles.intervalGrid}>
+                {INTERVAL_OPTIONS.map((opt) => {
+                  const isActive = intervalDays === opt.value;
+                  const icons: Record<number, string> = { 1: '📅', 2: '🔁', 3: '⏳', 7: '📆' };
+                  return (
+                    <TouchableOpacity key={opt.value} style={[styles.intervalCard, isActive && styles.intervalCardActive]} onPress={() => setIntervalDays(opt.value)} activeOpacity={0.75}>
+                      <Text style={styles.intervalIcon}>{icons[opt.value] ?? '📅'}</Text>
+                      <Text style={[styles.intervalLabel, isActive && styles.intervalLabelActive]}>{getTranslatedIntervalLabel(opt.value)}</Text>
+                      {isActive && <View style={styles.intervalCheck}><Text style={styles.intervalCheckText}>✓</Text></View>}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>{t(lang, 'addMedication.dailyDoseLabel')}</Text>
+              <View style={styles.freqRow}>
+                {FREQUENCY_OPTIONS.map((f) => (
+                  <TouchableOpacity key={f.value} style={[styles.freqChip, frequency === f.value && styles.freqChipActive]} onPress={() => handleFrequencyChange(f.value)}>
+                    <Text style={[styles.freqChipText, frequency === f.value && styles.freqChipTextActive]}>{getTranslatedFreqLabel(f.value)}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>{t(lang, 'addMedication.timesLabel')}</Text>
+              <View style={styles.timeGrid}>
+                {times.map((time, i) => (
+                  <TouchableOpacity key={i} style={styles.timePickerBox} onPress={() => openTimePicker(i)} activeOpacity={0.8}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.timeLabel}>{i + 1}. {t(lang, 'addMedication.doseIndex')}</Text>
+                      <Text style={styles.timeValueDisplay}>{time}</Text>
+                    </View>
+                    <Text style={styles.timeEditIcon}>🕰️</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* ----------------- MODERN TIME PICKER MODAL ----------------- */}
+            <Modal transparent animationType="fade" visible={showTimePicker} onRequestClose={() => setShowTimePicker(false)}>
+              <View style={styles.pickerOverlay}>
+                <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder }]}>
+                  <View style={styles.pickerHeader}>
+                    <View style={[styles.pickerIconContainer, { backgroundColor: colors.primary + '15' }]}>
+                      <Text style={styles.pickerIcon}>🕰️</Text>
+                    </View>
+                    <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>{t(lang, 'addMedication.timePickerTitle')}</Text>
+                  </View>
+                  <View style={styles.pickerBody}>
+                    {Platform.OS === 'ios' ? (
+                      <DateTimePicker
+                        value={getDateFromTimeStr(times[activeTimeIndex])}
+                        mode="time"
+                        display="spinner"
+                        is24Hour
+                        onChange={(_, selectedDate) => {
+                          if (selectedDate) {
+                            const h = selectedDate.getHours().toString().padStart(2, '0');
+                            const m = selectedDate.getMinutes().toString().padStart(2, '0');
+                            const newTimes = [...times];
+                            newTimes[activeTimeIndex] = `${h}:${m}`;
+                            setTimes(newTimes);
+                          }
+                        }}
+                        themeVariant={theme}
+                        textColor={colors.textPrimary}
+                      />
+                    ) : (
+                      /* Pure JS Custom Time Stepper for Android - No Popups, Premium UI! */
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: SPACING.xl }}>
+                        <View style={{ alignItems: 'center', width: 80 }}>
+                          <TouchableOpacity onPress={() => incrementHour(1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.md }}>
+                            <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text>
+                          </TouchableOpacity>
+                          <Text style={{ fontSize: 44, fontWeight: 'bold', color: colors.textPrimary }}>{androidHour.toString().padStart(2, '0')}</Text>
+                          <TouchableOpacity onPress={() => incrementHour(-1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.md }}>
+                            <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={{ fontSize: 40, fontWeight: 'bold', color: colors.textPrimary, marginHorizontal: SPACING.md }}>:</Text>
+                        <View style={{ alignItems: 'center', width: 80 }}>
+                          <TouchableOpacity onPress={() => incrementMinute(5)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.md }}>
+                            <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text>
+                          </TouchableOpacity>
+                          <Text style={{ fontSize: 44, fontWeight: 'bold', color: colors.textPrimary }}>{androidMinute.toString().padStart(2, '0')}</Text>
+                          <TouchableOpacity onPress={() => incrementMinute(-5)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.md }}>
+                            <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                  <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => {
+                    if (Platform.OS !== 'ios') {
+                      const h = androidHour.toString().padStart(2, '0');
+                      const m = androidMinute.toString().padStart(2, '0');
                       const newTimes = [...times];
                       newTimes[activeTimeIndex] = `${h}:${m}`;
                       setTimes(newTimes);
                     }
-                  }}
-                  themeVariant={theme}
-                  textColor={colors.textPrimary}
-                />
-              ) : (
-                 /* Pure JS Custom Time Stepper for Android - No Popups, Premium UI! */
-                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: SPACING.xl }}>
-                   <View style={{ alignItems: 'center', width: 80 }}>
-                      <TouchableOpacity onPress={() => incrementHour(1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.md }}>
-                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text>
-                      </TouchableOpacity>
-                      <Text style={{ fontSize: 44, fontWeight: 'bold', color: colors.textPrimary }}>{androidHour.toString().padStart(2, '0')}</Text>
-                      <TouchableOpacity onPress={() => incrementHour(-1)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.md }}>
-                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text>
-                      </TouchableOpacity>
-                   </View>
-                   <Text style={{ fontSize: 40, fontWeight: 'bold', color: colors.textPrimary, marginHorizontal: SPACING.md }}>:</Text>
-                   <View style={{ alignItems: 'center', width: 80 }}>
-                      <TouchableOpacity onPress={() => incrementMinute(5)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginBottom: SPACING.md }}>
-                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▲</Text>
-                      </TouchableOpacity>
-                      <Text style={{ fontSize: 44, fontWeight: 'bold', color: colors.textPrimary }}>{androidMinute.toString().padStart(2, '0')}</Text>
-                      <TouchableOpacity onPress={() => incrementMinute(-5)} style={{ padding: SPACING.md, backgroundColor: colors.surfaceBorder, borderRadius: 12, marginTop: SPACING.md }}>
-                        <Text style={{ color: colors.primary, fontSize: 24, fontWeight: 'bold' }}>▼</Text>
-                      </TouchableOpacity>
-                   </View>
-                 </View>
-              )}
-            </View>
-            <TouchableOpacity style={styles.pickerCloseBtn} onPress={() => {
-              if (Platform.OS !== 'ios') {
-                 const h = androidHour.toString().padStart(2, '0');
-                 const m = androidMinute.toString().padStart(2, '0');
-                 const newTimes = [...times];
-                 newTimes[activeTimeIndex] = `${h}:${m}`;
-                 setTimes(newTimes);
-              }
-              setShowTimePicker(false);
-            }}>
-              <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+                    setShowTimePicker(false);
+                  }}>
+                    <Text style={styles.pickerCloseBtnText}>{t(lang, 'addMedication.confirmBtn')}</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
 
-        {/* Toplam Adet --- Opsiyonel */}
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>
-            {lang === 'tr' ? 'Toplam Adet (Opsiyonel)' : 'Total Quantity (Optional)'}
-          </Text>
-          <TextInput
-            style={styles.input}
-            value={totalQuantity}
-            onChangeText={setTotalQuantity}
-            placeholder={lang === 'tr' ? 'Örn. 30, 60, 90 (tablet/kapsül sayısı)' : 'e.g. 30, 60, 90 (number of tablets)'}
-            placeholderTextColor={colors.textMuted}
-            keyboardType="numeric"
-          />
-        </View>
+            {/* Toplam Adet --- Opsiyonel */}
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>
+                {lang === 'tr' ? 'Toplam Adet (Opsiyonel)' : 'Total Quantity (Optional)'}
+              </Text>
+              <TextInput
+                style={styles.input}
+                value={totalQuantity}
+                onChangeText={setTotalQuantity}
+                placeholder={lang === 'tr' ? 'Örn. 30, 60, 90 (tablet/kapsül sayısı)' : 'e.g. 30, 60, 90 (number of tablets)'}
+                placeholderTextColor={colors.textMuted}
+                keyboardType="numeric"
+              />
+            </View>
           </>
         )}
 
@@ -915,138 +1009,138 @@ export default function AddMedicationScreen() {
           />
         </View>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[
-            styles.saveButton, 
+            styles.saveButton,
             (isSaving || !!activeDuplicateError) && styles.saveButtonDisabled
-          ]} 
-          onPress={handleSave} 
+          ]}
+          onPress={handleSave}
           disabled={isSaving || !!activeDuplicateError}
         >
           {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>{isEditMode ? `🔄 ${t(lang, 'addMedication.update')}` : `💾 ${t(lang, 'addMedication.save')}`}</Text>}
         </TouchableOpacity>
 
-      {/* ----------------- MODERN DATE PICKER MODAL ----------------- */}
-      <Modal transparent animationType="fade" visible={showStartDatePicker} onRequestClose={() => { setShowStartDatePicker(false); setActiveDateIndex(null); setSelectedPickerDate(null); }}>
-        <View style={styles.pickerOverlay}>
-          <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder, padding: 0, overflow: 'hidden' }]}>
-            <View style={[styles.customDatePickerHeader, { backgroundColor: colors.primary }]}>
-              <Text style={styles.customDatePickerYear}>
-                {new Date(selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate)).getFullYear()}
-              </Text>
-              <Text style={styles.customDatePickerDate}>
-                {new Date(selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate)).toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-              </Text>
-            </View>
-            <View style={styles.customDatePickerBody}>
-              {Platform.OS === 'ios' ? (
-                <View style={{ paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md }}>
-                  <DateTimePicker
-                    value={new Date(selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate))}
-                    mode="date"
-                    display="spinner"
-                    onChange={(_, selectedDate) => {
-                      if (selectedDate) {
-                        const formatted = selectedDate.toISOString().split('T')[0];
-                        setSelectedPickerDate(formatted);
-                      }
-                    }}
-                    themeVariant={theme}
-                    textColor={colors.textPrimary}
-                    style={{ height: 150 }}
-                  />
-                </View>
-              ) : (
-                /* Pure JS Custom Grid Date Picker for Android - Fully matches Theme! */
-                <View style={{ padding: SPACING.md }}>
-                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.lg }}>
+        {/* ----------------- MODERN DATE PICKER MODAL ----------------- */}
+        <Modal transparent animationType="fade" visible={showStartDatePicker} onRequestClose={() => { setShowStartDatePicker(false); setActiveDateIndex(null); setSelectedPickerDate(null); }}>
+          <View style={styles.pickerOverlay}>
+            <View style={[styles.pickerContainer, { backgroundColor: colors.surface, borderColor: colors.surfaceBorder, padding: 0, overflow: 'hidden' }]}>
+              <View style={[styles.customDatePickerHeader, { backgroundColor: colors.primary }]}>
+                <Text style={styles.customDatePickerYear}>
+                  {new Date(selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate)).getFullYear()}
+                </Text>
+                <Text style={styles.customDatePickerDate}>
+                  {new Date(selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate)).toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                </Text>
+              </View>
+              <View style={styles.customDatePickerBody}>
+                {Platform.OS === 'ios' ? (
+                  <View style={{ paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md }}>
+                    <DateTimePicker
+                      value={new Date(selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate))}
+                      mode="date"
+                      display="spinner"
+                      onChange={(_, selectedDate) => {
+                        if (selectedDate) {
+                          const formatted = selectedDate.toISOString().split('T')[0];
+                          setSelectedPickerDate(formatted);
+                        }
+                      }}
+                      themeVariant={theme}
+                      textColor={colors.textPrimary}
+                      style={{ height: 150 }}
+                    />
+                  </View>
+                ) : (
+                  /* Pure JS Custom Grid Date Picker for Android - Fully matches Theme! */
+                  <View style={{ padding: SPACING.md }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.lg }}>
                       <TouchableOpacity onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() - 1, 1))} style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}>
-                         <Text style={{ color: colors.textPrimary }}>◀</Text>
+                        <Text style={{ color: colors.textPrimary }}>◀</Text>
                       </TouchableOpacity>
                       <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.textPrimary }}>
-                         {androidMonthView.toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { month: 'long', year: 'numeric' })}
+                        {androidMonthView.toLocaleDateString(lang === 'tr' ? 'tr-TR' : 'en-US', { month: 'long', year: 'numeric' })}
                       </Text>
                       <TouchableOpacity onPress={() => setAndroidMonthView(new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 1))} style={{ padding: SPACING.sm, backgroundColor: colors.surfaceBorder, borderRadius: 8 }}>
-                         <Text style={{ color: colors.textPrimary }}>▶</Text>
+                        <Text style={{ color: colors.textPrimary }}>▶</Text>
                       </TouchableOpacity>
-                   </View>
-                   <View style={{ flexDirection: 'row', marginBottom: SPACING.md }}>
-                      {['Pt','Sa','Ça','Pe','Cu','Ct','Pz'].map((d, i) => <Text key={i} style={{ flex: 1, textAlign: 'center', color: colors.textSecondary, fontWeight: 'bold', fontSize: 12 }}>{d}</Text>)}
-                   </View>
-                   <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                    </View>
+                    <View style={{ flexDirection: 'row', marginBottom: SPACING.md }}>
+                      {['Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct', 'Pz'].map((d, i) => <Text key={i} style={{ flex: 1, textAlign: 'center', color: colors.textSecondary, fontWeight: 'bold', fontSize: 12 }}>{d}</Text>)}
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                       {Array.from({ length: (new Date(androidMonthView.getFullYear(), androidMonthView.getMonth(), 1).getDay() + 6) % 7 }).map((_, i) => <View key={`b-${i}`} style={{ width: '14.28%', aspectRatio: 1 }} />)}
                       {Array.from({ length: new Date(androidMonthView.getFullYear(), androidMonthView.getMonth() + 1, 0).getDate() }, (_, i) => i + 1).map(d => {
-                         const dStr = `${androidMonthView.getFullYear()}-${(androidMonthView.getMonth()+1).toString().padStart(2,'0')}-${d.toString().padStart(2,'0')}`;
-                         const isSelected = (selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate)) === dStr;
-                         return (
-                            <TouchableOpacity key={d} onPress={() => {
-                              setSelectedPickerDate(dStr);
-                            }} style={{ width: '14.28%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' }}>
-                               <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: isSelected ? colors.primary : 'transparent', justifyContent: 'center', alignItems: 'center' }}>
-                                  <Text style={{ color: isSelected ? '#fff' : colors.textPrimary, fontWeight: isSelected ? 'bold' : 'normal', fontSize: 15 }}>{d}</Text>
-                               </View>
-                            </TouchableOpacity>
-                         );
+                        const dStr = `${androidMonthView.getFullYear()}-${(androidMonthView.getMonth() + 1).toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
+                        const isSelected = (selectedPickerDate || (activeDateIndex !== null ? dates[activeDateIndex!] : startDate)) === dStr;
+                        return (
+                          <TouchableOpacity key={d} onPress={() => {
+                            setSelectedPickerDate(dStr);
+                          }} style={{ width: '14.28%', aspectRatio: 1, justifyContent: 'center', alignItems: 'center' }}>
+                            <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: isSelected ? colors.primary : 'transparent', justifyContent: 'center', alignItems: 'center' }}>
+                              <Text style={{ color: isSelected ? '#fff' : colors.textPrimary, fontWeight: isSelected ? 'bold' : 'normal', fontSize: 15 }}>{d}</Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
                       })}
-                   </View>
-                </View>
-              )}
+                    </View>
+                  </View>
+                )}
 
-              <View style={styles.customDatePickerActions}>
-                <TouchableOpacity style={styles.customDatePickerCancelBtn} onPress={() => { setShowStartDatePicker(false); setActiveDateIndex(null); setSelectedPickerDate(null); }}>
-                  <Text style={[styles.customDatePickerActionText, { color: colors.textSecondary }]}>{t(lang, 'settings.cancel')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.customDatePickerOkBtn} onPress={() => {
-                  if (selectedPickerDate) {
-                    if (activeDateIndex !== null) {
-                      // Validate vaccine date!
-                      const today = getLocalDateString();
-                      if (selectedPickerDate < today) {
-                        showAlert({
-                          message: lang === 'tr' ? 'Aşı tarihi geçmiş bir tarih olamaz.' : 'Vaccine date cannot be in the past.',
-                          type: 'danger'
-                        });
-                        return;
+                <View style={styles.customDatePickerActions}>
+                  <TouchableOpacity style={styles.customDatePickerCancelBtn} onPress={() => { setShowStartDatePicker(false); setActiveDateIndex(null); setSelectedPickerDate(null); }}>
+                    <Text style={[styles.customDatePickerActionText, { color: colors.textSecondary }]}>{t(lang, 'settings.cancel')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.customDatePickerOkBtn} onPress={() => {
+                    if (selectedPickerDate) {
+                      if (activeDateIndex !== null) {
+                        // Validate vaccine date!
+                        const today = getLocalDateString();
+                        if (selectedPickerDate < today) {
+                          showAlert({
+                            message: lang === 'tr' ? 'Aşı tarihi geçmiş bir tarih olamaz.' : 'Vaccine date cannot be in the past.',
+                            type: 'danger'
+                          });
+                          return;
+                        }
+                        if (dates.includes(selectedPickerDate) && dates[activeDateIndex] !== selectedPickerDate) {
+                          showAlert({
+                            message: lang === 'tr' ? 'Bu tarih zaten seçilmiş.' : 'This date is already selected.',
+                            type: 'danger'
+                          });
+                          return;
+                        }
+                        if (activeDateIndex > 0 && selectedPickerDate < dates[activeDateIndex - 1]) {
+                          showAlert({
+                            message: lang === 'tr' ? 'Aşı tarihi, bir önceki aşı tarihinden önce olamaz.' : 'Vaccine date cannot be earlier than the previous vaccine date.',
+                            type: 'danger'
+                          });
+                          return;
+                        }
+                        if (activeDateIndex < dates.length - 1 && selectedPickerDate > dates[activeDateIndex + 1]) {
+                          showAlert({
+                            message: lang === 'tr' ? 'Aşı tarihi, bir sonraki aşı tarihinden sonra olamaz.' : 'Vaccine date cannot be later than the next vaccine date.',
+                            type: 'danger'
+                          });
+                          return;
+                        }
+                        const newDates = [...dates];
+                        newDates[activeDateIndex] = selectedPickerDate;
+                        setDates(newDates);
+                      } else {
+                        setStartDate(selectedPickerDate);
                       }
-                      if (dates.includes(selectedPickerDate) && dates[activeDateIndex] !== selectedPickerDate) {
-                        showAlert({
-                          message: lang === 'tr' ? 'Bu tarih zaten seçilmiş.' : 'This date is already selected.',
-                          type: 'danger'
-                        });
-                        return;
-                      }
-                      if (activeDateIndex > 0 && selectedPickerDate < dates[activeDateIndex - 1]) {
-                        showAlert({
-                          message: lang === 'tr' ? 'Aşı tarihi, bir önceki aşı tarihinden önce olamaz.' : 'Vaccine date cannot be earlier than the previous vaccine date.',
-                          type: 'danger'
-                        });
-                        return;
-                      }
-                      if (activeDateIndex < dates.length - 1 && selectedPickerDate > dates[activeDateIndex + 1]) {
-                        showAlert({
-                          message: lang === 'tr' ? 'Aşı tarihi, bir sonraki aşı tarihinden sonra olamaz.' : 'Vaccine date cannot be later than the next vaccine date.',
-                          type: 'danger'
-                        });
-                        return;
-                      }
-                      const newDates = [...dates];
-                      newDates[activeDateIndex] = selectedPickerDate;
-                      setDates(newDates);
-                    } else {
-                      setStartDate(selectedPickerDate);
                     }
-                  }
-                  setShowStartDatePicker(false);
-                  setActiveDateIndex(null);
-                  setSelectedPickerDate(null);
-                }}>
-                  <Text style={[styles.customDatePickerActionText, { color: colors.primary, fontWeight: 'bold' }]}>{t(lang, 'addMedication.confirmBtn')}</Text>
-                </TouchableOpacity>
+                    setShowStartDatePicker(false);
+                    setActiveDateIndex(null);
+                    setSelectedPickerDate(null);
+                  }}>
+                    <Text style={[styles.customDatePickerActionText, { color: colors.primary, fontWeight: 'bold' }]}>{t(lang, 'addMedication.confirmBtn')}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
         <View style={{ height: SPACING.xxxl }} />
       </ScrollView>
@@ -1069,7 +1163,7 @@ export default function AddMedicationScreen() {
             <Text style={styles.barcodeModalTitle}>
               {lang === 'tr' ? 'Barkod Sorgula' : 'Verify Barcode'}
             </Text>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => {
                 if (abortControllerRef.current) {
                   abortControllerRef.current.abort();
@@ -1077,7 +1171,9 @@ export default function AddMedicationScreen() {
                 setShowBarcodeModal(false);
                 setScanned(false);
                 setIsSearchingBarcode(false);
-              }} 
+                setBarcodeSearchCount(0);
+                setRejectedNames([]);
+              }}
               style={styles.barcodeModalCloseBtn}
             >
               <Text style={{ fontSize: 24, color: colors.textPrimary }}>✕</Text>
@@ -1096,8 +1192,8 @@ export default function AddMedicationScreen() {
               {permission && !permission.granted ? (
                 <View style={styles.permissionContainer}>
                   <Text style={styles.permissionText}>
-                    {lang === 'tr' 
-                      ? 'Barkod okutabilmek için kamera izni vermeniz gerekmektedir.' 
+                    {lang === 'tr'
+                      ? 'Barkod okutabilmek için kamera izni vermeniz gerekmektedir.'
                       : 'Camera permission is required to scan barcodes.'}
                   </Text>
                   <TouchableOpacity style={styles.permissionBtn} onPress={requestPermission}>

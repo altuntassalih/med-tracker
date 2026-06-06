@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { MedicationLog } from '../services/firestore';
+import { MedicationLog, DailyHealthLog } from '../services/firestore';
 
 export interface User {
   uid: string;
@@ -20,6 +20,7 @@ export interface Profile {
   height?: number;
   weight?: number;
   targetWeight?: number;
+  gender?: 'female' | 'male' | 'other';
 }
 
 export interface Medication {
@@ -76,6 +77,14 @@ interface AppState {
   notificationsEnabled: boolean;
   autoMarkMissedAsTaken: boolean;
   dismissedStockWarnings: string[];
+  showPastWater: boolean;
+  showPastSleep: boolean;
+  showPastWeight: boolean;
+  showPastMood: boolean;
+  setShowPastWater: (show: boolean) => void;
+  setShowPastSleep: (show: boolean) => void;
+  setShowPastWeight: (show: boolean) => void;
+  setShowPastMood: (show: boolean) => void;
   setUser: (user: User | null) => void;
   setProfiles: (profiles: Profile[]) => void;
   addProfile: (profile: Profile) => void;
@@ -107,6 +116,9 @@ interface AppState {
   hideAlert: () => void;
   hasHydrated: boolean;
   setHasHydrated: (val: boolean) => void;
+  dailyHealthLogs: DailyHealthLog[];
+  setDailyHealthLogs: (logs: DailyHealthLog[]) => void;
+  upsertDailyHealthLogState: (profileId: string, dateStr: string, log: Partial<DailyHealthLog>) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -130,6 +142,14 @@ export const useStore = create<AppState>()(
       notificationsEnabled: true,
       autoMarkMissedAsTaken: false,
       dismissedStockWarnings: [],
+      showPastWater: true,
+      showPastSleep: true,
+      showPastWeight: true,
+      showPastMood: true,
+      setShowPastWater: (show) => set({ showPastWater: show }),
+      setShowPastSleep: (show) => set({ showPastSleep: show }),
+      setShowPastWeight: (show) => set({ showPastWeight: show }),
+      setShowPastMood: (show) => set({ showPastMood: show }),
       setUser: (user) => set({ user }),
       setProfiles: (profiles) => set({ profiles }),
       addProfile: (profile) => set((state) => ({ profiles: [...state.profiles, profile] })),
@@ -170,11 +190,31 @@ export const useStore = create<AppState>()(
       dismissStockWarning: (key) => set((state) => ({
         dismissedStockWarnings: [...(state.dismissedStockWarnings || []), key]
       })),
-      logout: () => set({ user: null }),
+      logout: () => set({ user: null, profiles: [], medications: [], medicationLogs: [], dailyHealthLogs: [] }),
       showAlert: (alert) => set({ alert }),
       hideAlert: () => set({ alert: null }),
       hasHydrated: false,
       setHasHydrated: (hasHydrated) => set({ hasHydrated }),
+      dailyHealthLogs: [],
+      setDailyHealthLogs: (logs) => set({ dailyHealthLogs: logs }),
+      upsertDailyHealthLogState: (profileId, dateStr, logData) => set((state) => {
+        const logs = state.dailyHealthLogs || [];
+        const existingIdx = logs.findIndex(l => l.profileId === profileId && l.date === dateStr);
+        if (existingIdx >= 0) {
+          const updated = [...logs];
+          updated[existingIdx] = { ...updated[existingIdx], ...logData };
+          return { dailyHealthLogs: updated };
+        } else {
+          const newLog: DailyHealthLog = {
+            id: `${profileId}_${dateStr}`,
+            profileId,
+            date: dateStr,
+            waterIntakeMl: logData.waterIntakeMl ?? 0,
+            ...logData
+          };
+          return { dailyHealthLogs: [...logs, newLog] };
+        }
+      }),
     }),
     {
       name: 'med-tracker-storage',

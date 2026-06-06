@@ -1,0 +1,45 @@
+name: Eczane Verileri Senkronizasyonu
+
+on:
+  schedule:
+    # Türkiye Saati ile Sabah 09:15'te çalışır (06:15 UTC)
+    - cron: '15 6 * * *'
+    # Türkiye Saati ile Öğleden Sonra 14:00'te çalışır (11:00 UTC)
+    - cron: '0 11 * * *'
+    # 3 günde bir gece yarısı yeni eczaneleri senkronize eder
+    - cron: '0 0 */3 * *'
+  workflow_dispatch: # Manuel tetikleme desteği
+
+jobs:
+  sync:
+    name: Veritabanı Senkronizasyonu
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Kodu Klonla
+        uses: actions/checkout@v4
+
+      - name: Node.js Kurulumu
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Bağımlılıkları Yükle
+        working-directory: ./med-tracker
+        run: npm ci || npm install --no-audit
+
+      - name: Nöbetçi Eczaneleri Senkronize Et (Günde 2 Kez)
+        if: github.event.schedule == '15 6 * * *' || github.event.schedule == '0 11 * * *' || github.event_name == 'workflow_dispatch'
+        working-directory: ./med-tracker
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          EXPO_PUBLIC_COLLECTAPI_KEY: ${{ secrets.EXPO_PUBLIC_COLLECTAPI_KEY }}
+        run: node scripts/sync-pharmacies.js --duty
+
+      - name: Yeni Eczaneleri Senkronize Et (3 Günde 1 Kez)
+        if: github.event.schedule == '0 0 */3 * *' || github.event_name == 'workflow_dispatch'
+        working-directory: ./med-tracker
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          EXPO_PUBLIC_NOSYAPI_KEY: ${{ secrets.EXPO_PUBLIC_NOSYAPI_KEY }}
+        run: node scripts/sync-pharmacies.js --recent

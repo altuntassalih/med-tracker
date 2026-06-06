@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Image } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useStore } from '../store/useStore';
 import { updateProfile } from 'firebase/auth';
 import { updateDoc, setDoc, doc, collection, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
-import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, AVATAR_OPTIONS } from '../constants/AppConstants';
+import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, AVATAR_OPTIONS, GENDER_MALE, GENDER_FEMALE, GENDER_OTHER } from '../constants/AppConstants';
 import { t } from '../constants/translations';
 import type { LanguageCode } from '../constants/translations';
 import { calculateBmi } from '../utils/bmi';
@@ -22,11 +24,58 @@ export default function ProfileSettingsScreen() {
   const { showAlert } = useStore();
   const [name, setName] = useState(activeProfile?.name || user?.displayName || '');
   const [avatar, setAvatar] = useState<string>(activeProfile?.avatar || '👤');
+  const [gender, setGender] = useState<'female' | 'male' | 'other'>(activeProfile?.gender || GENDER_FEMALE);
   const [age, setAge] = useState(activeProfile?.age ? String(activeProfile.age) : '');
   const [height, setHeight] = useState(activeProfile?.height ? String(activeProfile.height) : '');
   const [weight, setWeight] = useState(activeProfile?.weight ? String(activeProfile.weight) : '');
   const [targetWeight, setTargetWeight] = useState(activeProfile?.targetWeight ? String(activeProfile.targetWeight) : '');
   const [isSaving, setIsSaving] = useState(false);
+
+  const handlePickImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          lang === 'tr' ? 'İzin Gerekli' : 'Permission Required',
+          lang === 'tr' 
+            ? 'Profil resmi eklemek için galeri iznine ihtiyacımız var.' 
+            : 'We need library permissions to select a profile photo.'
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.6,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const selectedUri = result.assets[0].uri;
+        
+        const manipulated = await ImageManipulator.manipulateAsync(
+          selectedUri,
+          [{ resize: { width: 150, height: 150 } }],
+          {
+            compress: 0.5,
+            format: ImageManipulator.SaveFormat.JPEG,
+            base64: true,
+          }
+        );
+
+        if (manipulated.base64) {
+          const base64Data = `data:image/jpeg;base64,${manipulated.base64}`;
+          setAvatar(base64Data);
+        }
+      }
+    } catch (err) {
+      Alert.alert(
+        lang === 'tr' ? 'Hata' : 'Error',
+        lang === 'tr' ? 'Fotoğraf seçilirken bir hata oluştu.' : 'An error occurred while selecting the photo.'
+      );
+    }
+  };
 
   const handleSave = async () => {
     const trimmedName = name.trim();
@@ -51,9 +100,10 @@ export default function ProfileSettingsScreen() {
             height: height ? parseFloat(height) : null,
             weight: weight ? parseFloat(weight) : null,
             targetWeight: targetWeight ? parseFloat(targetWeight) : null,
+            gender: gender,
           }, { merge: true });
         } catch (dbErr: any) {
-          console.log('Firestore update failed, continuing with store update:', dbErr);
+          // Hata sessizce yutulur
         }
       }
       
@@ -67,6 +117,7 @@ export default function ProfileSettingsScreen() {
             height: height ? parseFloat(height) : undefined,
             weight: weight ? parseFloat(weight) : undefined,
             targetWeight: targetWeight ? parseFloat(targetWeight) : undefined,
+            gender: gender,
           } : p
         );
         setProfiles(updatedProfiles);
@@ -78,40 +129,13 @@ export default function ProfileSettingsScreen() {
         buttons: [{ text: 'OK', onPress: () => router.back() }]
       });
     } catch (err: any) {
-      console.log('--- PROFILE UPDATE ERROR ---');
-      console.log(err);
-      console.log('---------------------------');
       showAlert({ message: lang === 'tr' ? 'Profil güncellenemedi.' : 'Profile update failed.', type: 'danger' });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleLogout = () => {
-    showAlert({
-      message: t(lang, 'profiles.logoutConfirm'),
-      type: 'warning',
-      buttons: [
-        { text: t(lang, 'profiles.cancel'), style: 'cancel' },
-        {
-          text: t(lang, 'profiles.logout'),
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (auth) {
-                const { signOut: firebaseSignOut } = await import('firebase/auth');
-                await firebaseSignOut(auth);
-              }
-            } catch (e) {
-              console.log('Firebase signOut hatası:', e);
-            }
-            useStore.getState().logout();
-            router.replace('/login');
-          },
-        },
-      ]
-    });
-  };
+
 
   return (
     <View style={styles.container}>
@@ -127,9 +151,24 @@ export default function ProfileSettingsScreen() {
         <View style={styles.content}>
           <View style={styles.avatarContainer}>
             <View style={styles.avatarCircle}>
-              <Text style={styles.avatarLetter}>{avatar}</Text>
+              {avatar.startsWith('data:image/') ? (
+                <Image source={{ uri: avatar }} style={{ width: 80, height: 80, borderRadius: 40 }} />
+              ) : (
+                <Text style={styles.avatarLetter}>{avatar}</Text>
+              )}
             </View>
-            <Text style={styles.avatarHint}>{lang === 'tr' ? 'Avatar Seçin' : 'Select Avatar'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.md, marginTop: SPACING.sm }}>
+              <Text style={styles.avatarHint}>{lang === 'tr' ? 'Avatar / Fotoğraf Seçin' : 'Select Avatar / Photo'}</Text>
+              <TouchableOpacity 
+                style={[styles.customPhotoBtn, avatar.startsWith('data:image/') && styles.customPhotoBtnActive]} 
+                onPress={handlePickImage}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.customPhotoBtnText, { color: avatar.startsWith('data:image/') ? '#fff' : colors.primary }]}>
+                  📸 {lang === 'tr' ? 'Fotoğraf Yükle' : 'Upload Photo'}
+                </Text>
+              </TouchableOpacity>
+            </View>
             
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.avatarPicker}>
               {AVATAR_OPTIONS.map(emoji => (
@@ -155,6 +194,39 @@ export default function ProfileSettingsScreen() {
               autoCapitalize="words"
               returnKeyType="done"
             />
+          </View>
+
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>{t(language as LanguageCode, 'profileUpdate.genderLabel')}</Text>
+            <View style={styles.genderOptionsRow}>
+              <TouchableOpacity 
+                style={[styles.genderBtn, gender === GENDER_FEMALE && styles.genderBtnActive]} 
+                onPress={() => setGender(GENDER_FEMALE)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.genderBtnText, gender === GENDER_FEMALE && styles.genderBtnTextActive]}>
+                  👩 {t(language as LanguageCode, 'profileUpdate.genderFemale')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.genderBtn, gender === GENDER_MALE && styles.genderBtnActive]} 
+                onPress={() => setGender(GENDER_MALE)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.genderBtnText, gender === GENDER_MALE && styles.genderBtnTextActive]}>
+                  👨 {t(language as LanguageCode, 'profileUpdate.genderMale')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.genderBtn, gender === GENDER_OTHER && styles.genderBtnActive]} 
+                onPress={() => setGender(GENDER_OTHER)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.genderBtnText, gender === GENDER_OTHER && styles.genderBtnTextActive]}>
+                  👤 {t(language as LanguageCode, 'profileUpdate.genderOther')}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.fieldGroup}>
@@ -218,7 +290,11 @@ export default function ProfileSettingsScreen() {
                 marginBottom: SPACING.xl
               }
             ]}>
-              <Text style={[styles.bmiText, { color: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color }]}>
+              <Text 
+                style={[styles.bmiText, { color: calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.color }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
                 📊 {lang === 'tr' ? 'Beden Kitle İndeksi (BKİ):' : 'Body Mass Index (BMI):'} {calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.bmi} ({calculateBmi(weight ? parseFloat(weight) : 0, height ? parseFloat(height) : 0, lang)!.category})
               </Text>
             </View>
@@ -236,13 +312,7 @@ export default function ProfileSettingsScreen() {
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.logoutBtn}
-            onPress={handleLogout}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.logoutBtnText}>🚪 {t(lang, 'profiles.logout')}</Text>
-          </TouchableOpacity>
+
         </View>
       </ScrollView>
     </View>
@@ -314,6 +384,49 @@ const getStyles = (colors: any) => StyleSheet.create({
   },
   bmiText: {
     fontSize: TYPOGRAPHY.fontSizeMd,
+    fontWeight: 'bold',
+  },
+  genderOptionsRow: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+    marginTop: 4,
+  },
+  genderBtn: {
+    flex: 1,
+    backgroundColor: colors.surfaceBorder + '22',
+    borderWidth: 1,
+    borderColor: colors.surfaceBorder,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  genderBtnActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '18',
+  },
+  genderBtnText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: colors.textSecondary,
+  },
+  genderBtnTextActive: {
+    color: colors.primary,
+  },
+  customPhotoBtn: {
+    backgroundColor: colors.primary + '15',
+    borderColor: colors.primary + '40',
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: RADIUS.md,
+  },
+  customPhotoBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  customPhotoBtnText: {
+    fontSize: 12,
     fontWeight: 'bold',
   },
 });

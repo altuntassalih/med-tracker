@@ -79,7 +79,15 @@ export default function TabLayout() {
         name="medicines"
         options={{
           tabBarIcon: ({ focused }) => (
-            <TabIcon name={focused ? 'medical' : 'medical-outline'} label={t(lang, 'tabs.medicines')} focused={focused} colors={colors} />
+            <TabIcon name={focused ? 'medkit' : 'medkit-outline'} label={t(lang, 'tabs.medicines')} focused={focused} colors={colors} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="health"
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <TabIcon name={focused ? 'pulse' : 'pulse-outline'} label={t(lang, 'tabs.health')} focused={focused} colors={colors} />
           ),
         }}
       />
@@ -87,7 +95,7 @@ export default function TabLayout() {
         name="profiles"
         options={{
           tabBarIcon: ({ focused }) => (
-            <TabIcon name={focused ? 'people' : 'people-outline'} label={t(lang, 'tabs.profile')} focused={focused} colors={colors} />
+            <TabIcon name={focused ? 'person-circle' : 'person-circle-outline'} label={t(lang, 'tabs.profile')} focused={focused} colors={colors} />
           ),
         }}
       />

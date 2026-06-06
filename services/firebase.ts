@@ -1,7 +1,7 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 // @ts-ignore
 import { getAuth, Auth, initializeAuth, getReactNativePersistence } from 'firebase/auth';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, Firestore } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Firebase Ayarları (Fallback değerleri)
@@ -27,14 +27,16 @@ try {
       // @ts-ignore
       persistence: getReactNativePersistence(AsyncStorage),
     });
+    db = initializeFirestore(app, {
+      ignoreUndefinedProperties: true,
+    });
   } else {
     app = getApp();
     auth = getAuth(app);
+    db = getFirestore(app);
   }
-  db = getFirestore(app);
 } catch (err: any) {
   // Firebase başlatma hatası - uygulama local modda çalışacak
-  console.error('[Firebase] Initialization CRITICAL ERROR:', err);
   app = null;
   auth = null;
   db = null;

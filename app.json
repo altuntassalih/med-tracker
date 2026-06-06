@@ -2,14 +2,14 @@
   "expo": {
     "name": "MedTracker",
     "slug": "med-tracker",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "sdkVersion": "54.0.0",
     "android": {
       "package": "tr.com.salihaltuntas.medtracker",
-      "versionCode": 1,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
-        "backgroundColor": "#6C63FF"
+        "backgroundColor": "#0F172A"
       },
       "permissions": [
         "android.permission.USE_EXACT_ALARM",
@@ -44,7 +44,9 @@
             "kotlinVersion": "2.0.21"
           }
         }
-      ]
+      ],
+      "@react-native-google-signin/google-signin",
+      "expo-web-browser"
     ],
     "extra": {
       "router": {},

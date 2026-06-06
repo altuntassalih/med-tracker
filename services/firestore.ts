@@ -34,6 +34,7 @@ export interface Profile {
   height?: number;
   weight?: number;
   targetWeight?: number;
+  gender?: 'female' | 'male' | 'other';
   createdAt?: any;
 }
 
@@ -71,6 +72,19 @@ export interface MedicationLog {
   createdAt?: any;
 }
 
+export interface DailyHealthLog {
+  id: string; // `${profileId}_${date}`
+  profileId: string;
+  date: string; // YYYY-MM-DD
+  waterIntakeMl: number;
+  waterTargetMl?: number;
+  mood?: 'excellent' | 'good' | 'neutral' | 'bad' | 'terrible';
+  sleepHours?: number;
+  sleepRating?: number; // 1-5 rating
+  weightKg?: number;
+  createdAt?: any;
+}
+
 // ---- PROFİL İŞLEMLERİ ----
 
 export const getProfiles = async (userId: string): Promise<Profile[]> => {
@@ -102,7 +116,7 @@ export const createProfile = async (userId: string, profileData: Omit<Profile, '
       createdAt: serverTimestamp(),
     });
     return { id: docRef.id, userId, ...profileData };
-  } catch (_err) {
+  } catch (err) {
     return { 
       id: 'local_prof_' + Date.now(), 
       userId, 
@@ -168,7 +182,7 @@ export const addMedication = async (data: Omit<Medication, 'id' | 'createdAt'>):
       createdAt: serverTimestamp(),
     });
     return { id: docRef.id, ...data };
-  } catch (_err) {
+  } catch (err) {
     return { 
       id: 'local_med_' + Date.now(), 
       ...data,
@@ -201,11 +215,12 @@ export const getMedicationLogs = async (profileId: string): Promise<MedicationLo
   try {
     const q = query(
       collection(firestore, 'medicationLogs'),
-      where('profileId', '==', profileId),
-      orderBy('takenAt', 'desc')
+      where('profileId', '==', profileId)
     );
     const snapshot = await getDocs(q);
-    return snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as MedicationLog));
+    return snapshot.docs
+      .map((d) => ({ id: d.id, ...d.data() } as MedicationLog))
+      .sort((a, b) => b.takenAt.localeCompare(a.takenAt));
   } catch (_err) {
     return [];
   }
@@ -275,7 +290,6 @@ export const getGlobalMedicationList = async (): Promise<string[]> => {
     const snapshot = await getDocs(q);
     return snapshot.docs.map(d => d.data().name as string);
   } catch (err) {
-    console.log('Global meds fetch error:', err);
     return [];
   }
 };
@@ -293,7 +307,7 @@ export const addGlobalMedication = async (name: string): Promise<void> => {
       createdAt: serverTimestamp(),
     }, { merge: true });
   } catch (err) {
-    console.log('Global meds add error:', err);
+    // Hata sessizce yutulur
   }
 };
 
@@ -306,7 +320,7 @@ export const subscribeToGlobalMedications = (callback: (meds: string[]) => void)
     const meds = snapshot.docs.map(d => d.data().name as string);
     callback(meds);
   }, (err) => {
-    console.log('Global meds selection sync error:', err);
+    // Hata sessizce yutulur
   });
 };
 
@@ -364,5 +378,66 @@ export const saveMedicationBarcode = async (userId: string, record: BarcodeRecor
     }, { merge: true });
   } catch (_err) {
     // Kaydetme hatası durumunda sessizce yoksay
+  }
+};
+
+// ---- SAĞLIK (DAILY HEALTH LOG) İŞLEMLERİ ----
+
+export const getDailyHealthLogs = async (profileId: string): Promise<DailyHealthLog[]> => {
+  const firestore = getDb();
+  if (!firestore) return [];
+  try {
+    const q = query(
+      collection(firestore, 'dailyHealthLogs'),
+      where('profileId', '==', profileId)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs
+      .map((d) => ({ id: d.id, ...d.data() } as DailyHealthLog))
+      .sort((a, b) => b.date.localeCompare(a.date));
+  } catch (_err) {
+    return [];
+  }
+};
+
+export const upsertDailyHealthLog = async (
+  profileId: string,
+  dateStr: string,
+  data: Partial<DailyHealthLog>
+): Promise<DailyHealthLog> => {
+  const firestore = getDb();
+  const docId = `${profileId}_${dateStr}`;
+  const logData = {
+    profileId,
+    date: dateStr,
+    ...data,
+    updatedAt: new Date().toISOString()
+  };
+
+  if (!firestore) {
+    return {
+      id: docId,
+      ...logData,
+      waterIntakeMl: data.waterIntakeMl ?? 0,
+      createdAt: new Date().toISOString()
+    } as DailyHealthLog;
+  }
+
+  try {
+    const docRef = doc(firestore, 'dailyHealthLogs', docId);
+    await setDoc(docRef, {
+      ...logData,
+      createdAt: serverTimestamp()
+    }, { merge: true });
+
+    const docSnap = await getDoc(docRef);
+    return { id: docId, ...docSnap.data() } as DailyHealthLog;
+  } catch (_err) {
+    return {
+      id: docId,
+      ...logData,
+      waterIntakeMl: data.waterIntakeMl ?? 0,
+      createdAt: new Date().toISOString()
+    } as DailyHealthLog;
   }
 };

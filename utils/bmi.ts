@@ -24,10 +24,10 @@ export const calculateBmi = (weightKg: number, heightCm: number, lang: LanguageC
     category = lang === 'tr' ? 'Fazla Kilolu' : 'Overweight';
     color = '#F59E0B'; // orange
   } else if (bmi < 35) {
-    category = lang === 'tr' ? 'Obez (Sınıf 1)' : 'Obese (Class 1)';
+    category = lang === 'tr' ? 'Obez\u00A0(Sınıf\u00A01)' : 'Obese\u00A0(Class\u00A01)';
     color = '#EF4444'; // red
   } else {
-    category = lang === 'tr' ? 'Aşırı Obez (Sınıf 2+)' : 'Severely Obese (Class 2+)';
+    category = lang === 'tr' ? 'Aşırı\u00A0Obez\u00A0(Sınıf\u00A02+)' : 'Severely\u00A0Obese\u00A0(Class\u00A02+)';
     color = '#7C3AED'; // purple
   }
   

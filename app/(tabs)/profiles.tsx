@@ -7,18 +7,20 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../services/firebase';
 import { deleteProfile } from '../../services/firestore';
 import { useStore } from '../../store/useStore';
-import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../../constants/AppConstants';
+import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, GENDER_MALE, GENDER_FEMALE, GENDER_OTHER } from '../../constants/AppConstants';
 import { t, LanguageCode } from '../../constants/translations';
 import { calculateBmi } from '../../utils/bmi';
 
 export default function ProfilesScreen() {
   const { user, profiles, removeProfile, setActiveProfileId, activeProfileId, language, theme, showAlert } = useStore();
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0];
   const [isLoading] = useState(false);
   
   const colors = getThemeColors(theme);
@@ -57,7 +59,7 @@ export default function ProfilesScreen() {
               removeProfile(profile.id);
               await deleteProfile(profile.id);
             } catch (err) {
-              console.log('Profil silinirken hata:', err);
+              // Hata sessizce yutulur
             }
           },
         },
@@ -78,7 +80,7 @@ export default function ProfilesScreen() {
             try {
               if (auth) await signOut(auth);
             } catch (e) {
-              console.log('Firebase signOut hatası:', e);
+              // Hata sessizce yutulur
             }
             useStore.getState().logout();
             router.replace('/login');
@@ -98,14 +100,79 @@ export default function ProfilesScreen() {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.currentUserCard}>
-          <View style={styles.avatarCircle}>
-            <Text style={styles.avatarInitial}>{user?.displayName?.[0] ?? 'K'}</Text>
+        <View style={[styles.currentUserCard, { flexDirection: 'column', alignItems: 'stretch' }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.md }}>
+            <View style={[styles.avatarCircle, { overflow: 'hidden' }]}>
+              {activeProfile?.avatar?.startsWith('data:image/') ? (
+                <Image source={{ uri: activeProfile.avatar }} style={{ width: 52, height: 52 }} />
+              ) : (
+                <Text style={[styles.avatarInitial, { fontSize: 24 }]}>{activeProfile?.avatar || (activeProfile?.isMain ? '👤' : '👦')}</Text>
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.currentUserName}>{activeProfile?.name || user?.displayName || t(lang, 'profiles.guestUser')}</Text>
+              <Text style={styles.currentUserEmail}>
+                {activeProfile?.isMain 
+                  ? (user?.email || t(lang, 'profiles.localSession')) 
+                  : (activeProfile?.age ? `${activeProfile.age} ${t(lang, 'profiles.ageSuffix')}` : '')}
+              </Text>
+            </View>
           </View>
-          <View>
-            <Text style={styles.currentUserName}>{user?.displayName ?? t(lang, 'profiles.guestUser')}</Text>
-            <Text style={styles.currentUserEmail}>{user?.email || t(lang, 'profiles.localSession')}</Text>
-          </View>
+
+          {/* Sağlık Bilgileri ve BKİ */}
+          {(activeProfile?.height || activeProfile?.weight || activeProfile?.targetWeight || activeProfile?.gender) && (
+            <View style={[styles.healthStatsContainer, { borderTopColor: colors.primary + '33', marginTop: SPACING.sm }]}>
+              <View style={styles.statsRow}>
+                {activeProfile?.gender && (
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>{lang === 'tr' ? 'CİNSİYET' : 'GENDER'}</Text>
+                    <Text style={styles.statValue}>
+                      {activeProfile.gender === 'female' 
+                        ? (lang === 'tr' ? 'Kadın' : 'Female') 
+                        : activeProfile.gender === 'male' 
+                          ? (lang === 'tr' ? 'Erkek' : 'Male') 
+                          : (lang === 'tr' ? 'Diğer' : 'Other')}
+                    </Text>
+                  </View>
+                )}
+                {activeProfile?.height && (
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>{lang === 'tr' ? 'BOY' : 'HEIGHT'}</Text>
+                    <Text style={styles.statValue}>{activeProfile.height} cm</Text>
+                  </View>
+                )}
+                {activeProfile?.weight && (
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>{lang === 'tr' ? 'KİLO' : 'WEIGHT'}</Text>
+                    <Text style={styles.statValue}>{activeProfile.weight} kg</Text>
+                  </View>
+                )}
+                {activeProfile?.targetWeight && (
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>{lang === 'tr' ? 'HEDEF' : 'TARGET'}</Text>
+                    <Text style={[styles.statValue, { color: colors.primary }]}>{activeProfile.targetWeight} kg</Text>
+                  </View>
+                )}
+              </View>
+              {calculateBmi(activeProfile?.weight || 0, activeProfile?.height || 0, lang) && (
+                <View style={[
+                  styles.bmiInfoBadge, 
+                  { 
+                    backgroundColor: calculateBmi(activeProfile?.weight || 0, activeProfile?.height || 0, lang)!.color + '15', 
+                    borderColor: calculateBmi(activeProfile?.weight || 0, activeProfile?.height || 0, lang)!.color + '33' 
+                  }
+                ]}>
+                  <Text 
+                    style={[styles.bmiInfoText, { color: calculateBmi(activeProfile?.weight || 0, activeProfile?.height || 0, lang)!.color }]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                  >
+                    ⚖️ BKİ: {calculateBmi(activeProfile?.weight || 0, activeProfile?.height || 0, lang)!.bmi} • {calculateBmi(activeProfile?.weight || 0, activeProfile?.height || 0, lang)!.category}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
         </View>
 
         <Text style={styles.sectionTitle}>{t(lang, 'profiles.listTitle')}</Text>
@@ -121,8 +188,12 @@ export default function ProfilesScreen() {
                 onPress={() => setActiveProfileId(profile.id)}
                 activeOpacity={0.85}
               >
-                <View style={[styles.profileAvatar, activeProfileId === profile.id && styles.profileAvatarActive]}>
-                  <Text style={styles.profileAvatarEmoji}>{profile.avatar || (profile.isMain ? '👤' : '👦')}</Text>
+                <View style={[styles.profileAvatar, activeProfileId === profile.id && styles.profileAvatarActive, { overflow: 'hidden' }]}>
+                  {profile.avatar?.startsWith('data:image/') ? (
+                    <Image source={{ uri: profile.avatar }} style={{ width: 48, height: 48 }} />
+                  ) : (
+                    <Text style={styles.profileAvatarEmoji}>{profile.avatar || (profile.isMain ? '👤' : '👦')}</Text>
+                  )}
                 </View>
                 <View style={styles.profileInfo}>
                   <Text style={styles.profileName}>{profile.name}</Text>
@@ -136,9 +207,21 @@ export default function ProfilesScreen() {
                   </View>
 
                   {/* Sağlık Bilgileri ve BKİ */}
-                  {(profile.height || profile.weight || profile.targetWeight) && (
+                  {(profile.height || profile.weight || profile.targetWeight || profile.gender) && (
                     <View style={styles.healthStatsContainer}>
                       <View style={styles.statsRow}>
+                        {profile.gender && (
+                          <View style={styles.statItem}>
+                            <Text style={styles.statLabel}>{lang === 'tr' ? 'CİNSİYET' : 'GENDER'}</Text>
+                            <Text style={styles.statValue}>
+                              {profile.gender === 'female' 
+                                ? (lang === 'tr' ? 'Kadın' : 'Female') 
+                                : profile.gender === 'male' 
+                                  ? (lang === 'tr' ? 'Erkek' : 'Male') 
+                                  : (lang === 'tr' ? 'Diğer' : 'Other')}
+                            </Text>
+                          </View>
+                        )}
                         {profile.height && (
                           <View style={styles.statItem}>
                             <Text style={styles.statLabel}>{lang === 'tr' ? 'BOY' : 'HEIGHT'}</Text>
@@ -166,7 +249,11 @@ export default function ProfilesScreen() {
                             borderColor: calculateBmi(profile.weight || 0, profile.height || 0, lang)!.color + '33' 
                           }
                         ]}>
-                          <Text style={[styles.bmiInfoText, { color: calculateBmi(profile.weight || 0, profile.height || 0, lang)!.color }]}>
+                          <Text 
+                            style={[styles.bmiInfoText, { color: calculateBmi(profile.weight || 0, profile.height || 0, lang)!.color }]}
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                          >
                             ⚖️ BKİ: {calculateBmi(profile.weight || 0, profile.height || 0, lang)!.bmi} • {calculateBmi(profile.weight || 0, profile.height || 0, lang)!.category}
                           </Text>
                         </View>
