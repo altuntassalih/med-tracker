@@ -33,6 +33,7 @@ export default function PharmaciesScreen() {
   const [isDemo, setIsDemo] = useState(false);
   const [userCoords, setUserCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [searchMode, setSearchMode] = useState<'duty' | 'all'>('duty');
+  const [searchInitiated, setSearchInitiated] = useState(false);
   
   // Dropdown Modalları ve Arama Kelimeleri
   const [showCityModal, setShowCityModal] = useState(false);
@@ -40,17 +41,68 @@ export default function PharmaciesScreen() {
   const [citySearch, setCitySearch] = useState('');
   const [districtSearch, setDistrictSearch] = useState('');
 
-  // Sayfa açıldığında konumu alıp eczaneleri sorgula
+  // Sayfa açıldığında konumu sessizce alıp sadece il-ilçeyi ön tanımlı doldur, otomatik arama yapma
   useEffect(() => {
-    handleGetLocationAndFetch();
+    const silentGeo = async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const location = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+          const { latitude, longitude } = location.coords;
+          setUserCoords({ latitude, longitude });
+          const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
+          if (reverseGeocode.length > 0) {
+            const addr = reverseGeocode[0];
+            const rawCity = addr.region || addr.city || addr.subregion || '';
+            const rawDistrict = addr.district || addr.subregion || addr.city || '';
+            
+            const cleanName = (str: string | null) => {
+              if (!str) return '';
+              return str
+                .replace(/ilçesi/gi, '')
+                .replace(/ilçe/gi, '')
+                .replace(/ili/gi, '')
+                .replace(/il/gi, '')
+                .replace(/büyükşehir/gi, '')
+                .replace(/belediyesi/gi, '')
+                .trim();
+            };
+
+            const cleanedCity = cleanName(rawCity);
+            const cleanedDistrict = cleanName(rawDistrict);
+
+            const matchedCity = Object.keys(TURKEY_CITIES).find(
+              (c) => c.toLowerCase() === cleanedCity.toLowerCase()
+            );
+
+            if (matchedCity) {
+              setCity(matchedCity);
+              const matchedDistrict = TURKEY_CITIES[matchedCity].find(
+                (d) => d.toLowerCase() === cleanedDistrict.toLowerCase()
+              );
+              if (matchedDistrict) {
+                setDistrict(matchedDistrict);
+              } else {
+                setDistrict(TURKEY_CITIES[matchedCity][0]);
+              }
+            }
+          }
+        }
+      } catch (_err) {
+        // silent fail
+      }
+    };
+    silentGeo();
   }, []);
 
-  // İl, İlçe veya Arama Modu değiştiğinde eczaneleri getir
+  // Arama modu (Tab) değiştiğinde, eğer daha önce arama yapılmışsa otomatik güncelle
   useEffect(() => {
-    if (city && district) {
+    if (searchInitiated && city && district) {
       loadPharmacies();
     }
-  }, [city, district, searchMode]);
+  }, [searchMode]);
 
   const loadPharmacies = async () => {
     setIsLoading(true);
@@ -70,13 +122,20 @@ export default function PharmaciesScreen() {
     }
   };
 
+  const handleSearch = () => {
+    setSearchInitiated(true);
+    loadPharmacies();
+  };
+
   const handleGetLocationAndFetch = async () => {
     setIsLoading(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        // İzin verilmediyse doğrudan varsayılan İstanbul/Kadıköy ile devam et
-        loadPharmacies();
+        Alert.alert(
+          lang === 'tr' ? 'Konum İzni' : 'Location Permission',
+          lang === 'tr' ? 'Konum izni verilmedi. Lütfen ili ve ilçeyi manuel seçerek arayın.' : 'Location permission not granted. Please select city and district manually.'
+        );
         return;
       }
 
@@ -109,7 +168,6 @@ export default function PharmaciesScreen() {
         const cleanedCity = cleanName(rawCity);
         const cleanedDistrict = cleanName(rawDistrict);
 
-        // Şehrin veri kümemizde olup olmadığını kontrol et
         const matchedCity = Object.keys(TURKEY_CITIES).find(
           (c) => c.toLowerCase() === cleanedCity.toLowerCase()
         );
@@ -124,11 +182,21 @@ export default function PharmaciesScreen() {
           } else {
             setDistrict(TURKEY_CITIES[matchedCity][0]);
           }
+          Alert.alert(
+            lang === 'tr' ? 'Konum Bulundu' : 'Location Found',
+            lang === 'tr' 
+              ? `Konumunuz ${matchedCity} - ${matchedDistrict || 'Merkez'} olarak tespit edildi. Arama yapmak için lütfen "Eczaneleri Ara" butonuna basın.` 
+              : `Your location is detected as ${matchedCity} - ${matchedDistrict || 'Center'}. Please press "Search Pharmacies" to start searching.`
+          );
         }
       }
     } catch (err) {
-      // Location detection error ignored, fallback to default arama
-      loadPharmacies();
+      Alert.alert(
+        lang === 'tr' ? 'Hata' : 'Error',
+        lang === 'tr' ? 'Konum bilgisi alınamadı. Lütfen manuel seçin.' : 'Could not retrieve location. Please select manually.'
+      );
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -296,6 +364,10 @@ export default function PharmaciesScreen() {
           </TouchableOpacity>
         </View>
 
+        <TouchableOpacity style={styles.searchBtn} onPress={handleSearch} activeOpacity={0.8}>
+          <Text style={styles.searchBtnText}>🔍 {lang === 'tr' ? 'Eczaneleri Ara' : 'Search Pharmacies'}</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.gpsBtn} onPress={handleGetLocationAndFetch} activeOpacity={0.8}>
           <Text style={styles.gpsBtnText}>📍 {lang === 'tr' ? 'Konumumu Kullan' : 'Use My Location'}</Text>
         </TouchableOpacity>
@@ -309,11 +381,22 @@ export default function PharmaciesScreen() {
         </View>
       ) : (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {getSortedPharmacies().length === 0 ? (
+          {!searchInitiated ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateEmoji}>🔍</Text>
+              <Text style={styles.emptyStateText}>
+                {lang === 'tr'
+                  ? 'Arama yapmak için şehir ve ilçe seçip "Eczaneleri Ara" butonuna basın veya konumunuzu kullanın.'
+                  : 'Select city and district and press "Search Pharmacies" or use your location to search.'}
+              </Text>
+            </View>
+          ) : getSortedPharmacies().length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyStateEmoji}>🏥</Text>
               <Text style={styles.emptyStateText}>
-                {lang === 'tr' ? 'Bu bölgede nöbetçi eczane bulunamadı.' : 'No duty pharmacies found in this region.'}
+                {searchMode === 'duty'
+                  ? (lang === 'tr' ? 'Bu bölgede nöbetçi eczane bulunamadı.' : 'No duty pharmacies found in this region.')
+                  : (lang === 'tr' ? 'Bu bölgede eczane bulunamadı.' : 'No pharmacies found in this region.')}
               </Text>
             </View>
           ) : (
@@ -324,7 +407,7 @@ export default function PharmaciesScreen() {
                   <View style={styles.pharmacyHeader}>
                     <View style={styles.pharmacyTitleContainer}>
                       <View style={styles.pharmacyIconBadge}>
-                        <Text style={{ fontSize: 18 }}>🏥</Text>
+                        <Text style={{ fontSize: 14 }}>🏥</Text>
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.pharmacyName}>{item.name}</Text>
@@ -360,11 +443,13 @@ export default function PharmaciesScreen() {
           )}
 
           {/* Uyarı Bandı */}
-          <Text style={styles.disclaimerText}>
-            {lang === 'tr'
-              ? '* Nöbetçi eczane listesi resmi odalardan alınmaktadır. Eczane nöbetleri değişiklik gösterebileceği için gitmeden önce arayıp teyit etmeniz önerilir.'
-              : '* The duty pharmacy list is retrieved from official associations. Since duties can change, calling to confirm before going is recommended.'}
-          </Text>
+          {searchInitiated && (
+            <Text style={styles.disclaimerText}>
+              {lang === 'tr'
+                ? '* Nöbetçi eczane listesi resmi odalardan alınmaktadır. Eczane nöbetleri değişiklik gösterebileceği için gitmeden önce arayıp teyit etmeniz önerilir.'
+                : '* The duty pharmacy list is retrieved from official associations. Since duties can change, calling to confirm before going is recommended.'}
+            </Text>
+          )}
           <View style={{ height: SPACING.xxl }} />
         </ScrollView>
       )}
@@ -583,6 +668,23 @@ const getStyles = (colors: any) =>
       color: colors.primary,
       fontWeight: 'bold',
     },
+    searchBtn: {
+      backgroundColor: colors.primary,
+      borderRadius: RADIUS.lg,
+      paddingVertical: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: colors.primary,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.25,
+      shadowRadius: 6,
+      elevation: 4,
+    },
+    searchBtnText: {
+      fontSize: TYPOGRAPHY.fontSizeMd,
+      color: '#fff',
+      fontWeight: 'bold',
+    },
     loadingBox: {
       flex: 1,
       alignItems: 'center',
@@ -611,11 +713,11 @@ const getStyles = (colors: any) =>
     },
     pharmacyCard: {
       backgroundColor: colors.surfaceElevated,
-      borderRadius: RADIUS.xl,
+      borderRadius: RADIUS.lg,
       borderWidth: 1,
       borderColor: colors.surfaceBorder,
-      padding: SPACING.xl,
-      marginBottom: SPACING.lg,
+      padding: SPACING.md,
+      marginBottom: SPACING.md,
       elevation: 2,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 2 },
@@ -623,17 +725,17 @@ const getStyles = (colors: any) =>
       shadowRadius: 4,
     },
     pharmacyHeader: {
-      marginBottom: SPACING.md,
+      marginBottom: SPACING.sm,
     },
     pharmacyTitleContainer: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: SPACING.md,
+      gap: SPACING.sm,
     },
     pharmacyIconBadge: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 30,
+      height: 30,
+      borderRadius: 15,
       backgroundColor: colors.danger + '15',
       alignItems: 'center',
       justifyContent: 'center',
@@ -641,46 +743,46 @@ const getStyles = (colors: any) =>
       borderColor: colors.danger + '33',
     },
     pharmacyName: {
-      fontSize: TYPOGRAPHY.fontSizeLg,
+      fontSize: TYPOGRAPHY.fontSizeMd,
       fontWeight: TYPOGRAPHY.fontWeightBold,
       color: colors.textPrimary,
     },
     pharmacyDistance: {
-      fontSize: 12,
+      fontSize: TYPOGRAPHY.fontSizeXs,
       fontWeight: '600',
       color: colors.primary,
       marginTop: 2,
     },
     pharmacyAddress: {
-      fontSize: TYPOGRAPHY.fontSizeMd,
+      fontSize: TYPOGRAPHY.fontSizeSm,
       color: colors.textSecondary,
-      lineHeight: 22,
-      marginBottom: SPACING.xl,
+      lineHeight: 18,
+      marginBottom: SPACING.md,
     },
     cardActions: {
       flexDirection: 'row',
-      gap: SPACING.md,
+      gap: SPACING.sm,
     },
     callBtn: {
       flex: 1,
       backgroundColor: colors.surface,
       borderWidth: 1,
       borderColor: colors.surfaceBorder,
-      borderRadius: RADIUS.lg,
-      paddingVertical: 12,
+      borderRadius: RADIUS.md,
+      paddingVertical: 8,
       alignItems: 'center',
       justifyContent: 'center',
     },
     callBtnText: {
-      fontSize: TYPOGRAPHY.fontSizeMd,
+      fontSize: TYPOGRAPHY.fontSizeSm,
       color: colors.textPrimary,
       fontWeight: 'bold',
     },
     routeBtn: {
       flex: 1,
       backgroundColor: colors.primary,
-      borderRadius: RADIUS.lg,
-      paddingVertical: 12,
+      borderRadius: RADIUS.md,
+      paddingVertical: 8,
       alignItems: 'center',
       justifyContent: 'center',
       shadowColor: colors.primary,
@@ -690,7 +792,7 @@ const getStyles = (colors: any) =>
       elevation: 4,
     },
     routeBtnText: {
-      fontSize: TYPOGRAPHY.fontSizeMd,
+      fontSize: TYPOGRAPHY.fontSizeSm,
       color: '#fff',
       fontWeight: 'bold',
     },

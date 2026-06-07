@@ -745,7 +745,10 @@ export default function HomeScreen() {
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm }}>
             <TouchableOpacity onPress={() => router.push('/pharmacies')} activeOpacity={0.8} style={styles.headerPharmacyBtn}>
-              <Text style={{ fontSize: 22 }}>🏥</Text>
+              <Text style={{ fontSize: 16 }}>🏥</Text>
+              <Text style={{ fontSize: 12, fontWeight: 'bold', color: colors.textPrimary }}>
+                {language === 'tr' ? 'Eczane' : 'Pharmacy'}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => router.push('/profile-settings')} activeOpacity={0.8}>
               <View style={[styles.avatarPlaceholder, { overflow: 'hidden' }]}>
@@ -1909,10 +1912,14 @@ const getStyles = (colors: any) => StyleSheet.create({
     borderRadius: 4,
   },
   headerPharmacyBtn: {
-    width: 48, height: 48, borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: RADIUS.full,
     backgroundColor: colors.surfaceElevated,
     borderWidth: 1, borderColor: colors.surfaceBorder,
-    alignItems: 'center', justifyContent: 'center',
   },
   warningCardPharmacyBtn: {
     flex: 1.2,
