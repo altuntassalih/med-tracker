@@ -173,21 +173,21 @@ export default function PharmaciesScreen() {
         );
 
         if (matchedCity) {
-          setCity(matchedCity);
+          const finalCity = matchedCity;
           const matchedDistrict = TURKEY_CITIES[matchedCity].find(
             (d) => d.toLowerCase() === cleanedDistrict.toLowerCase()
           );
-          if (matchedDistrict) {
-            setDistrict(matchedDistrict);
-          } else {
-            setDistrict(TURKEY_CITIES[matchedCity][0]);
-          }
-          Alert.alert(
-            lang === 'tr' ? 'Konum Bulundu' : 'Location Found',
-            lang === 'tr' 
-              ? `Konumunuz ${matchedCity} - ${matchedDistrict || 'Merkez'} olarak tespit edildi. Arama yapmak için lütfen "Eczaneleri Ara" butonuna basın.` 
-              : `Your location is detected as ${matchedCity} - ${matchedDistrict || 'Center'}. Please press "Search Pharmacies" to start searching.`
-          );
+          const finalDistrict = matchedDistrict || TURKEY_CITIES[matchedCity][0];
+
+          setCity(finalCity);
+          setDistrict(finalDistrict);
+          setSearchInitiated(true);
+
+          const result = searchMode === 'duty'
+            ? await fetchDutyPharmacies(finalCity, finalDistrict)
+            : await fetchCommonPharmacies(finalCity, finalDistrict, latitude, longitude);
+          setPharmacies(result.pharmacies);
+          setIsDemo(result.isDemo);
         }
       }
     } catch (err) {
