@@ -1,5 +1,6 @@
 import { db } from './firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { TURKEY_CITIES } from '../constants/turkeyCities';
 
 export interface Pharmacy {
   name: string;
@@ -8,10 +9,6 @@ export interface Pharmacy {
   phone: string;
   loc?: string; // "latitude,longitude" şeklinde koordinatlar
 }
-
-const API_KEY = process.env.EXPO_PUBLIC_COLLECTAPI_KEY || '';
-const NOSYAPI_KEY = process.env.EXPO_PUBLIC_NOSYAPI_KEY || '';
-const NOSYAPI_BASE_URL = 'https://www.nosyapi.com/apiv2/service';
 
 const DB_COLLECTIONS = {
   ACTIVE_DISTRICTS: 'active_districts',
@@ -84,20 +81,17 @@ export const getMockPharmacies = (city: string, district: string): Pharmacy[] =>
     {
       name: `${district.toUpperCase()} MERKEZ NÖBETÇİ ECZANESİ`,
       address: `Cumhuriyet Mahallesi, Atatürk Caddesi No: 12, ${district}/${city}`,
-      phone: "02161234567",
-      loc: "40.9924,29.0232"
+      phone: "02161234567"
     },
     {
       name: "HAYAT ECZANESİ",
       address: `Yeni Mahalle, Sağlık Sokak No: 8/A, ${district}/${city}`,
-      phone: "02129876543",
-      loc: "41.0082,28.9784"
+      phone: "02129876543"
     },
     {
       name: "ŞİFA ECZANESİ",
       address: `Hürriyet Mahallesi, Deva Bulvarı No: 54, ${district}/${city}`,
-      phone: "03125556677",
-      loc: "39.9334,32.8597"
+      phone: "03125556677"
     }
   ];
 };
@@ -112,58 +106,10 @@ export const getMockCommonPharmacies = (city: string, district: string): Pharmac
   ];
 };
 
-/** NosyAPI yanıt elemanı tipi */
-interface NosyAPIPharmacyItem {
-  pharmacyID: number;
-  pharmacyName: string;
-  address: string;
-  city: string;
-  district: string;
-  town: string | null;
-  directions: string | null;
-  phone: string;
-  phone2: string | null;
-  latitude: number;
-  longitude: number;
-}
-
-/** NosyAPI üzerinden tüm eczaneleri çeken doğrudan fallback metodu */
-const fetchFromNosyAPI = async (city: string, district: string): Promise<Pharmacy[]> => {
-  const citySlug = toSlug(city);
-  const districtSlug = toSlug(district);
-  const url = `${NOSYAPI_BASE_URL}/pharmaciesv2?city=${encodeURIComponent(citySlug)}&district=${encodeURIComponent(districtSlug)}&limit=50&apiKey=${NOSYAPI_KEY}`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'content-type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error();
-  }
-
-  const json = await response.json();
-  if (json.status !== 'success' || !json.data) {
-    throw new Error();
-  }
-
-  const pharmacies: Pharmacy[] = json.data.map((item: NosyAPIPharmacyItem) => ({
-    name: item.pharmacyName,
-    dist: item.district,
-    address: item.address,
-    phone: item.phone || '',
-    loc: `${item.latitude},${item.longitude}`,
-  }));
-
-  return pharmacies;
-};
-
 /**
  * Nöbetçi eczaneleri Firestore'dan çeker.
  * Firestore'da veri yoksa veya süresi geçmişse, arka planda ilçeyi active_districts'e ekler.
- * Acil durumda doğrudan API'yi sorgular, aksi halde kullanıcıya dostça hata verir.
+ * API çağrıları kaldırılmıştır. Firestore'da veri yoksa mock veri döner.
  */
 export const fetchDutyPharmacies = async (city: string, district: string): Promise<{ pharmacies: Pharmacy[]; isDemo: boolean }> => {
   const firestore = getDb();
@@ -190,63 +136,15 @@ export const fetchDutyPharmacies = async (city: string, district: string): Promi
   // 2. Veritabanı boş veya güncel değilse bu ilçeyi aktif ilçeler kuyruğuna yaz
   await registerActiveDistrict(city, district);
 
-  // 3. Fallback: İstemci doğrudan API'ye gitmeyi dener (API anahtarı varsa)
-  if (!API_KEY || API_KEY.trim() === '' || API_KEY.includes('YOUR_')) {
-    const mockData = getMockPharmacies(city, district);
-    return { pharmacies: mockData, isDemo: true };
-  }
-
-  try {
-    const formattedCity = city.toLowerCase();
-    const formattedDistrict = district.toLowerCase();
-    const url = `https://api.collectapi.com/health/dutyPharmacy?ilce=${encodeURIComponent(formattedDistrict)}&il=${encodeURIComponent(formattedCity)}`;
-    
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'content-type': 'application/json',
-        'authorization': `apikey ${API_KEY}`
-      }
-    });
-
-    if (!response.ok) throw new Error();
-
-    const json = await response.json();
-    if (!json.success || !json.result || json.result.length === 0) throw new Error();
-
-    const pharmacies: Pharmacy[] = json.result.map((item: any) => ({
-      name: item.name,
-      dist: item.dist,
-      address: item.address,
-      phone: item.phone,
-      loc: item.loc,
-    }));
-
-    // Firestore veritabanını güncelle
-    if (firestore && pharmacies.length > 0) {
-      try {
-        const docRef = doc(firestore, DB_COLLECTIONS.DUTY_PHARMACIES, docId);
-        await setDoc(docRef, {
-          city: city.trim(),
-          district: district.trim(),
-          pharmacies,
-          updatedAt: Date.now()
-        }, { merge: true });
-      } catch (err) {
-        // Sessizce yutulur
-      }
-    }
-
-    return { pharmacies, isDemo: false };
-  } catch (error) {
-    // API kotası veya bağlantı hatası durumunda kullanıcıya hata fırlat
-    throw new Error('Geçici bir bağlantı veya kota sorunu yaşanıyor. Lütfen daha sonra tekrar deneyiniz.');
-  }
+  // API bağlantısı kaldırıldığı için mock veri döner
+  const mockData = getMockPharmacies(city, district);
+  return { pharmacies: mockData, isDemo: true };
 };
 
 /**
  * Tüm eczaneleri Firestore'dan çeker (Veritabanı zaten önceden OSM ile yüklenmiş olacaktır).
- * Bulunamazsa bu ilçeyi active_districts'e yazar ve doğrudan API fallback sorgusu dener.
+ * Bulunamazsa bu ilçeyi active_districts'e yazar.
+ * API çağrıları kaldırılmıştır. Firestore'da veri yoksa mock veri döner.
  */
 export const fetchCommonPharmacies = async (
   city: string,
@@ -278,32 +176,59 @@ export const fetchCommonPharmacies = async (
   // 2. İlçe yoksa kuyruğa ekle
   await registerActiveDistrict(city, district);
 
-  // 3. Fallback: İstemci doğrudan API'ye gitmeyi dener (API anahtarı varsa)
-  if (!NOSYAPI_KEY || NOSYAPI_KEY.trim() === '' || NOSYAPI_KEY.includes('YOUR_')) {
-    const mockData = getMockCommonPharmacies(city, district);
-    return { pharmacies: mockData, isDemo: true };
-  }
+  // API bağlantısı kaldırıldığı için mock veri döner
+  const mockData = getMockCommonPharmacies(city, district);
+  return { pharmacies: mockData, isDemo: true };
+};
+
+/** Bir şehirdeki tüm eczaneleri (tüm ilçelerden) Firestore'dan çeker */
+export const fetchCommonPharmaciesForCity = async (city: string): Promise<Pharmacy[]> => {
+  const firestore = getDb();
+  if (!firestore) return [];
+  const citySlug = toSlug(city);
+  const districts = TURKEY_CITIES[city] || [];
 
   try {
-    const pharmacies = await fetchFromNosyAPI(city, district);
-
-    // Firestore veritabanını güncelle
-    if (firestore && pharmacies.length > 0) {
-      try {
-        const docRef = doc(firestore, DB_COLLECTIONS.ALL_PHARMACIES, docId);
-        await setDoc(docRef, {
-          city: city.trim(),
-          district: district.trim(),
-          pharmacies,
-          updatedAt: Date.now()
-        }, { merge: true });
-      } catch (err) {
-        // Sessizce yutulur
+    const promises = districts.map(async (d: string) => {
+      const districtSlug = toSlug(d);
+      const docRef = doc(firestore, DB_COLLECTIONS.ALL_PHARMACIES, `${citySlug}_${districtSlug}`);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        return Array.isArray(data.pharmacies) ? data.pharmacies : [];
       }
-    }
+      return [];
+    });
+    const results = await Promise.all(promises);
+    return results.flat();
+  } catch (err) {
+    return [];
+  }
+};
 
-    return { pharmacies, isDemo: false };
-  } catch (error) {
-    throw new Error('Geçici bir bağlantı veya kota sorunu yaşanıyor. Lütfen daha sonra tekrar deneyiniz.');
+/** Bir şehirdeki tüm nöbetçi eczaneleri (tüm ilçelerden) Firestore'dan çeker */
+export const fetchDutyPharmaciesForCity = async (city: string): Promise<Pharmacy[]> => {
+  const firestore = getDb();
+  if (!firestore) return [];
+  const citySlug = toSlug(city);
+  const districts = TURKEY_CITIES[city] || [];
+
+  try {
+    const promises = districts.map(async (d: string) => {
+      const districtSlug = toSlug(d);
+      const docRef = doc(firestore, DB_COLLECTIONS.DUTY_PHARMACIES, `${citySlug}_${districtSlug}`);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (Array.isArray(data.pharmacies)) {
+          return data.pharmacies;
+        }
+      }
+      return [];
+    });
+    const results = await Promise.all(promises);
+    return results.flat();
+  } catch (err) {
+    return [];
   }
 };

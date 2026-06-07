@@ -211,6 +211,7 @@ async function syncDutyPharmacies() {
       console.log(`  -> Scraper başarılı! ${pharmacies.length} eczane bulundu.`);
     } catch (err) {
       scraperFailed = true;
+      console.log(`  -> Scraper hatası: ${err.message}`);
     }
 
     if (scraperFailed || pharmacies.length === 0) {
@@ -252,8 +253,6 @@ async function syncDutyPharmacies() {
         await batch.commit();
         console.log(`  -> CollectAPI ile ${savedCount} aktif ilçe başarıyla güncellendi.`);
       }
-      
-      process.exitCode = 1;
     } else {
       // C. Scraper Başarılıysa: Çekilen tüm eczaneleri Firestore'a yaz (Tüm ilçeler için tek istekte)
       const districtsInCity = TURKEY_CITIES[city] || [];

@@ -743,11 +743,24 @@ export default function HomeScreen() {
               {getTodayGreeting(language as LanguageCode)}, <Text style={styles.userName}>{activeProfile?.name?.split(' ')[0] ?? user?.displayName?.split(' ')[0] ?? 'Kullanıcı'} 👋</Text>
             </Text>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm }}>
-            <TouchableOpacity onPress={() => router.push('/pharmacies')} activeOpacity={0.8} style={styles.headerPharmacyBtn}>
-              <Text style={{ fontSize: 22 }}>🏥</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.md }}>
+            <TouchableOpacity 
+              onPress={() => router.push('/pharmacies')} 
+              activeOpacity={0.8} 
+              style={{ alignItems: 'center', justifyContent: 'center' }}
+            >
+              <View style={styles.headerPharmacyBtn}>
+                <Text style={{ fontSize: 22 }}>⚕️</Text>
+              </View>
+              <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 4, fontWeight: '600' }}>
+                {language === 'tr' ? 'Eczane' : 'Pharmacy'}
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.push('/profile-settings')} activeOpacity={0.8}>
+            <TouchableOpacity 
+              onPress={() => router.push('/profile-settings')} 
+              activeOpacity={0.8}
+              style={{ alignItems: 'center', justifyContent: 'center' }}
+            >
               <View style={[styles.avatarPlaceholder, { overflow: 'hidden' }]}>
                 {activeProfile?.avatar?.startsWith('data:image/') ? (
                   <Image source={{ uri: activeProfile.avatar }} style={{ width: 48, height: 48 }} />
@@ -755,6 +768,9 @@ export default function HomeScreen() {
                   <Text style={styles.avatarInitial}>{activeProfile?.avatar || '👤'}</Text>
                 )}
               </View>
+              <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 4, fontWeight: '600' }}>
+                {language === 'tr' ? 'Profil' : 'Profile'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -961,16 +977,6 @@ export default function HomeScreen() {
                 {/* Action Buttons */}
                 <View style={styles.actionButtons}>
                   <TouchableOpacity
-                    style={styles.postponeBtn}
-                    onPress={() => router.push('/pharmacies')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.postponeBtnEmoji}>🏥</Text>
-                    <Text style={styles.postponeBtnText}>
-                      {language === 'tr' ? 'Eczane' : 'Pharmacy'}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
                     style={[styles.takeBtn, { backgroundColor: colors.danger + '18', borderColor: colors.danger }]}
                     onPress={() => dismissStockWarning(warning.key)}
                     activeOpacity={0.7}
@@ -978,6 +984,16 @@ export default function HomeScreen() {
                     <Text style={[styles.takeBtnEmoji, { color: colors.danger }]}>✓</Text>
                     <Text style={[styles.takeBtnText, { color: colors.danger }]}>
                       {language === 'tr' ? 'Tamam' : 'OK'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.postponeBtn}
+                    onPress={() => router.push('/pharmacies')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.postponeBtnEmoji}>⚕️</Text>
+                    <Text style={styles.postponeBtnText}>
+                      {language === 'tr' ? 'Eczane' : 'Pharmacy'}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1017,16 +1033,6 @@ export default function HomeScreen() {
                   {/* Action Buttons */}
                   <View style={styles.actionButtons}>
                     <TouchableOpacity
-                      style={styles.postponeBtn}
-                      onPress={() => router.push('/pharmacies')}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.postponeBtnEmoji}>🏥</Text>
-                      <Text style={styles.postponeBtnText}>
-                        {language === 'tr' ? 'Eczane' : 'Pharmacy'}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
                       style={[
                         styles.takeBtn,
                         {
@@ -1040,6 +1046,16 @@ export default function HomeScreen() {
                       <Text style={[styles.takeBtnEmoji, { color: isDanger ? colors.danger : colors.warning }]}>✓</Text>
                       <Text style={[styles.takeBtnText, { color: isDanger ? colors.danger : colors.warning }]}>
                         {language === 'tr' ? 'Tamam' : 'OK'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.postponeBtn}
+                      onPress={() => router.push('/pharmacies')}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.postponeBtnEmoji}>⚕️</Text>
+                      <Text style={styles.postponeBtnText}>
+                        {language === 'tr' ? 'Eczane' : 'Pharmacy'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1375,22 +1391,22 @@ export default function HomeScreen() {
                       <>
                         {selectedDate <= todayStr && (
                           <TouchableOpacity
-                            style={styles.postponeBtn}
-                            onPress={() => handlePostpone(med.id, time, selectedDate)}
-                            activeOpacity={0.75}
-                          >
-                            <Text style={styles.postponeBtnEmoji}>⏭️</Text>
-                            <Text style={styles.postponeBtnText}>{t(language as LanguageCode, 'home.postponeBtn')}</Text>
-                          </TouchableOpacity>
-                        )}
-                        {selectedDate <= todayStr && (
-                          <TouchableOpacity
                             style={styles.takeBtn}
                             onPress={() => handleTakeMedication(med.id, time, selectedDate)}
                             activeOpacity={0.75}
                           >
                             <Text style={styles.takeBtnEmoji}>✓</Text>
                             <Text style={styles.takeBtnText}>{t(language as LanguageCode, 'home.takeBtn')}</Text>
+                          </TouchableOpacity>
+                        )}
+                        {selectedDate <= todayStr && (
+                          <TouchableOpacity
+                            style={styles.postponeBtn}
+                            onPress={() => handlePostpone(med.id, time, selectedDate)}
+                            activeOpacity={0.75}
+                          >
+                            <Text style={styles.postponeBtnEmoji}>⏭️</Text>
+                            <Text style={styles.postponeBtnText}>{t(language as LanguageCode, 'home.postponeBtn')}</Text>
                           </TouchableOpacity>
                         )}
                       </>
@@ -1432,7 +1448,7 @@ const getStyles = (colors: any) => StyleSheet.create({
     opacity: 0.08,
   },
   scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 100 },
+  scrollContent: { paddingBottom: 40 },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1573,23 +1589,26 @@ const getStyles = (colors: any) => StyleSheet.create({
   takeBtnEmoji: { fontSize: 14, color: colors.success },
   takeBtnText: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.success, fontWeight: TYPOGRAPHY.fontWeightBold },
   actionButtons: {
-    flexDirection: 'row',
-    gap: SPACING.sm,
+    flexDirection: 'column',
+    gap: 6,
+    justifyContent: 'center',
+    alignItems: 'stretch',
+    minWidth: 95,
   },
   postponeBtn: {
     backgroundColor: colors.surfaceBorder + '44',
     borderColor: colors.surfaceBorder,
     borderWidth: 1,
     paddingHorizontal: SPACING.sm,
-    paddingVertical: SPACING.sm,
-    borderRadius: RADIUS.md,
+    paddingVertical: 5,
+    borderRadius: RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 4,
   },
-  postponeBtnEmoji: { fontSize: 12 },
-  postponeBtnText: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.textSecondary, fontWeight: TYPOGRAPHY.fontWeightMedium },
+  postponeBtnEmoji: { fontSize: 10 },
+  postponeBtnText: { fontSize: 10, color: colors.textSecondary, fontWeight: TYPOGRAPHY.fontWeightMedium },
   completedCard: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
     backgroundColor: colors.surfaceElevated, opacity: 0.7, borderRadius: RADIUS.lg,

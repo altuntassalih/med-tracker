@@ -152,6 +152,22 @@ export default function MedicinesScreen() {
         showsVerticalScrollIndicator={false}
       >
         <TouchableOpacity
+          style={styles.pharmacyButton}
+          onPress={() => router.push('/pharmacies')}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.pharmacyButtonIcon}>⚕️</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.pharmacyButtonText}>
+              {lang === 'tr' ? 'Nöbetçi / En Yakın Eczaneler' : 'Duty / Nearest Pharmacies'}
+            </Text>
+            <Text style={styles.pharmacyButtonSub}>
+              {lang === 'tr' ? 'Yakınınızdaki nöbetçi eczaneleri bulun ve yol tarifi alın' : 'Find duty pharmacies near you and get directions'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={[
             styles.analyzeButton, 
             (isAnalyzing || (selectedMeds.length === 0 && !analysisResult)) && styles.analyzeButtonDisabled
@@ -179,22 +195,6 @@ export default function MedicinesScreen() {
                 : analysisResult
                   ? (lang === 'tr' ? 'Son yapılan yapay zeka analizini modalda açar' : 'Opens the last AI analysis in a modal')
                   : t(lang, 'medicines.analyzeSubAll')}
-            </Text>
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.pharmacyButton}
-          onPress={() => router.push('/pharmacies')}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.pharmacyButtonIcon}>🏥</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.pharmacyButtonText}>
-              {lang === 'tr' ? 'Nöbetçi / En Yakın Eczaneler' : 'Duty / Nearest Pharmacies'}
-            </Text>
-            <Text style={styles.pharmacyButtonSub}>
-              {lang === 'tr' ? 'Yakınınızdaki nöbetçi eczaneleri bulun ve yol tarifi alın' : 'Find duty pharmacies near you and get directions'}
             </Text>
           </View>
         </TouchableOpacity>
@@ -329,7 +329,7 @@ const getStyles = (colors: any) => StyleSheet.create({
   archiveHeaderBtnText: { fontSize: TYPOGRAPHY.fontSizeXs, color: colors.primary, fontWeight: TYPOGRAPHY.fontWeightSemiBold },
   profileName: { fontSize: TYPOGRAPHY.fontSizeSm, color: colors.primary, marginTop: 4 },
   scroll: { flex: 1 },
-  scrollContent: { padding: SPACING.xl, paddingBottom: 150 },
+  scrollContent: { padding: SPACING.xl, paddingBottom: 40 },
   analyzeButton: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
     backgroundColor: colors.primary + '11', borderRadius: RADIUS.lg,

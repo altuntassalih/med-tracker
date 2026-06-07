@@ -11,23 +11,115 @@ import {
   Linking,
   Platform,
   Alert,
+  KeyboardAvoidingView,
 } from 'react-native';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
 import { useStore } from '../store/useStore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';
-import { TURKEY_CITIES } from '../constants/turkeyCities';
-import { fetchDutyPharmacies, fetchCommonPharmacies, Pharmacy } from '../services/pharmacy';
+import { TURKEY_CITIES, CITY_CENTERS } from '../constants/turkeyCities';
+import {
+  fetchDutyPharmacies,
+  fetchCommonPharmacies,
+  fetchDutyPharmaciesForCity,
+  fetchCommonPharmaciesForCity,
+  Pharmacy
+} from '../services/pharmacy';
+
+const toSlug = (text: string): string => {
+  return text
+    .toLowerCase()
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ş/g, 's')
+    .replace(/ı/g, 'i')
+    .replace(/ö/g, 'o')
+    .replace(/ç/g, 'c')
+    .replace(/â/g, 'a')
+    .replace(/î/g, 'i')
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-');
+};
+
+const normalizeText = (text: string): string => {
+  return text
+    .replace(/İ/g, 'i')
+    .replace(/I/g, 'ı')
+    .toLowerCase()
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ş/g, 's')
+    .replace(/ı/g, 'i')
+    .replace(/ö/g, 'o')
+    .replace(/ç/g, 'c')
+    .replace(/â/g, 'a')
+    .replace(/î/g, 'i')
+    .trim();
+};
+
+const cleanNameForMatching = (name: string): string => {
+  let cleaned = normalizeText(name);
+  cleaned = cleaned.replace(/[^a-z0-9]/g, '');
+  cleaned = cleaned
+    .replace(/eczanesi$/, '')
+    .replace(/eczane$/, '')
+    .replace(/ecz$/, '')
+    .replace(/^eczanesi/, '')
+    .replace(/^eczane/, '')
+    .replace(/^ecz/, '');
+  return cleaned;
+};
+
+// Geolocation constants
+const GPS_LAST_KNOWN_TIMEOUT_MS = 3000;
+const GPS_CURRENT_POSITION_TIMEOUT_MS = 8000;
+const REVERSE_GEOCODE_TIMEOUT_MS = 5000;
+const DEFAULT_FALLBACK_CITY = 'İstanbul';
+const DEFAULT_FALLBACK_DISTRICT = 'Kadıköy';
+
+// Haversine Mesafe Hesaplama
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371; // Dünya yarıçapı (km)
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) *
+      Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+const getDefaultDistrictForCity = (cityName: string): string => {
+  const defaults: Record<string, string> = {
+    'İstanbul': 'Kadıköy',
+    'Adana': 'Seyhan',
+    'Ankara': 'Çankaya',
+    'İzmir': 'Konak',
+    'Bursa': 'Osmangazi',
+    'Antalya': 'Muratpaşa',
+  };
+  const list = TURKEY_CITIES[cityName] || [];
+  if (defaults[cityName] && list.includes(defaults[cityName])) {
+    return defaults[cityName];
+  }
+  return list.includes('Merkez') ? 'Merkez' : (list[0] || '');
+};
 
 export default function PharmaciesScreen() {
   const { language, theme, showAlert } = useStore();
   const colors = getThemeColors(theme);
   const styles = getStyles(colors);
   const lang = language as LanguageCode;
+  const insets = useSafeAreaInsets();
 
-  const [city, setCity] = useState('İstanbul');
-  const [district, setDistrict] = useState('Kadıköy');
+  const [city, setCity] = useState<string>('');
+  const [district, setDistrict] = useState<string>('');
   const [pharmacies, setPharmacies] = useState<Pharmacy[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
@@ -40,62 +132,6 @@ export default function PharmaciesScreen() {
   const [showDistrictModal, setShowDistrictModal] = useState(false);
   const [citySearch, setCitySearch] = useState('');
   const [districtSearch, setDistrictSearch] = useState('');
-
-  // Sayfa açıldığında konumu sessizce alıp sadece il-ilçeyi ön tanımlı doldur, otomatik arama yapma
-  useEffect(() => {
-    const silentGeo = async () => {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const location = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
-          const { latitude, longitude } = location.coords;
-          setUserCoords({ latitude, longitude });
-          const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
-          if (reverseGeocode.length > 0) {
-            const addr = reverseGeocode[0];
-            const rawCity = addr.region || addr.city || addr.subregion || '';
-            const rawDistrict = addr.district || addr.subregion || addr.city || '';
-            
-            const cleanName = (str: string | null) => {
-              if (!str) return '';
-              return str
-                .replace(/ilçesi/gi, '')
-                .replace(/ilçe/gi, '')
-                .replace(/ili/gi, '')
-                .replace(/il/gi, '')
-                .replace(/büyükşehir/gi, '')
-                .replace(/belediyesi/gi, '')
-                .trim();
-            };
-
-            const cleanedCity = cleanName(rawCity);
-            const cleanedDistrict = cleanName(rawDistrict);
-
-            const matchedCity = Object.keys(TURKEY_CITIES).find(
-              (c) => c.toLowerCase() === cleanedCity.toLowerCase()
-            );
-
-            if (matchedCity) {
-              setCity(matchedCity);
-              const matchedDistrict = TURKEY_CITIES[matchedCity].find(
-                (d) => d.toLowerCase() === cleanedDistrict.toLowerCase()
-              );
-              if (matchedDistrict) {
-                setDistrict(matchedDistrict);
-              } else {
-                setDistrict(TURKEY_CITIES[matchedCity][0]);
-              }
-            }
-          }
-        }
-      } catch (_err) {
-        // silent fail
-      }
-    };
-    silentGeo();
-  }, []);
 
   // Arama modu (Tab) değiştiğinde, eğer daha önce arama yapılmışsa otomatik güncelle
   useEffect(() => {
@@ -110,7 +146,42 @@ export default function PharmaciesScreen() {
       const result = searchMode === 'duty'
         ? await fetchDutyPharmacies(city, district)
         : await fetchCommonPharmacies(city, district, userCoords?.latitude, userCoords?.longitude);
-      setPharmacies(result.pharmacies);
+      
+      let fetchedPharmacies = result.pharmacies;
+
+      if (searchMode === 'duty') {
+        try {
+          const commonResult = await fetchCommonPharmacies(city, district);
+          if (commonResult && commonResult.pharmacies.length > 0) {
+            const commonMap = new Map<string, string>();
+            commonResult.pharmacies.forEach(cp => {
+              if (cp.loc) {
+                commonMap.set(cleanNameForMatching(cp.name), cp.loc);
+              }
+            });
+            fetchedPharmacies = fetchedPharmacies.map(dp => {
+              const cleanedName = cleanNameForMatching(dp.name);
+              let matchedLoc = commonMap.get(cleanedName);
+              if (!matchedLoc) {
+                for (const [key, value] of commonMap.entries()) {
+                  if (cleanedName.includes(key) || key.includes(cleanedName)) {
+                    matchedLoc = value;
+                    break;
+                  }
+                }
+              }
+              if (matchedLoc) {
+                return { ...dp, loc: matchedLoc };
+              }
+              return dp;
+            });
+          }
+        } catch (matchErr) {
+          // ignore matching error, keep original pharmacies
+        }
+      }
+
+      setPharmacies(fetchedPharmacies);
       setIsDemo(result.isDemo);
     } catch (err: any) {
       Alert.alert(
@@ -123,6 +194,13 @@ export default function PharmaciesScreen() {
   };
 
   const handleSearch = () => {
+    if (!city || !district) {
+      Alert.alert(
+        lang === 'tr' ? 'Uyarı' : 'Warning',
+        lang === 'tr' ? 'Lütfen arama yapmadan önce il ve ilçe seçin.' : 'Please select a city and district before searching.'
+      );
+      return;
+    }
     setSearchInitiated(true);
     loadPharmacies();
   };
@@ -136,59 +214,134 @@ export default function PharmaciesScreen() {
           lang === 'tr' ? 'Konum İzni' : 'Location Permission',
           lang === 'tr' ? 'Konum izni verilmedi. Lütfen ili ve ilçeyi manuel seçerek arayın.' : 'Location permission not granted. Please select city and district manually.'
         );
+        setIsLoading(false);
         return;
       }
 
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
+      let location = null;
+      try {
+        location = await Promise.race([
+          Location.getLastKnownPositionAsync({}),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), GPS_LAST_KNOWN_TIMEOUT_MS))
+        ]);
+      } catch (_e) {}
+
+      if (!location) {
+        try {
+          location = await Promise.race([
+            Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+            }),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Location timeout')), GPS_CURRENT_POSITION_TIMEOUT_MS))
+          ]);
+        } catch (_e) {}
+      }
+
+      if (!location) {
+        throw new Error(lang === 'tr' ? 'Konum alınamadı.' : 'Could not retrieve location.');
+      }
 
       const { latitude, longitude } = location.coords;
       setUserCoords({ latitude, longitude });
 
-      const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
-      if (reverseGeocode.length > 0) {
-        const addr = reverseGeocode[0];
-        
-        const cleanName = (str: string | null) => {
-          if (!str) return '';
-          return str
-            .replace(/ilçesi/gi, '')
-            .replace(/ilçe/gi, '')
-            .replace(/ili/gi, '')
-            .replace(/il/gi, '')
-            .replace(/büyükşehir/gi, '')
-            .replace(/belediyesi/gi, '')
-            .trim();
-        };
+      // 1. En yakın şehri koordinat bazlı bulalım (Çevrimdışı ve son derece hızlı)
+      let minDistance = Infinity;
+      let nearestCity = DEFAULT_FALLBACK_CITY;
 
-        const rawCity = addr.region || addr.city || addr.subregion || '';
-        const rawDistrict = addr.district || addr.subregion || addr.city || '';
+      for (const [cityName, centerCoords] of Object.entries(CITY_CENTERS)) {
+        const dist = calculateDistance(latitude, longitude, centerCoords.lat, centerCoords.lon);
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestCity = cityName;
+        }
+      }
 
-        const cleanedCity = cleanName(rawCity);
-        const cleanedDistrict = cleanName(rawDistrict);
+      // 2. Şehirdeki tüm ortak eczaneleri doğrudan Firestore'dan çekelim (API araması yapmaz)
+      // Şehre ait ilçeyi belirlemek için her zaman ortak eczanelerin koordinatlarını kullanmalıyız.
+      const commonPharmacies = await fetchCommonPharmaciesForCity(nearestCity);
 
-        const matchedCity = Object.keys(TURKEY_CITIES).find(
-          (c) => c.toLowerCase() === cleanedCity.toLowerCase()
+      if (commonPharmacies.length === 0) {
+        // Eğer veritabanında tüm şehir için hiç kayıt yoksa, eski yöntemle tek ilçeyi deneriz (Mock/Demo fallback)
+        const finalCity = nearestCity;
+        const finalDistrict = getDefaultDistrictForCity(finalCity);
+        setCity(finalCity);
+        setDistrict(finalDistrict);
+        setSearchInitiated(true);
+
+        const result = searchMode === 'duty'
+          ? await fetchDutyPharmacies(finalCity, finalDistrict)
+          : await fetchCommonPharmacies(finalCity, finalDistrict, latitude, longitude);
+        setPharmacies(result.pharmacies);
+        setIsDemo(result.isDemo);
+        setIsLoading(false);
+        return;
+      }
+
+      // 3. Çekilen tüm ortak eczanelerin mesafesini hesaplayalım ve en yakın olanı bulalım
+      let closestCommon = commonPharmacies[0];
+      let minDist = Infinity;
+
+      commonPharmacies.forEach((cp) => {
+        if (cp.loc) {
+          const coords = cp.loc.split(',').map(Number);
+          if (coords.length === 2 && !isNaN(coords[0]) && !isNaN(coords[1])) {
+            const dist = calculateDistance(latitude, longitude, coords[0], coords[1]);
+            if (dist < minDist) {
+              minDist = dist;
+              closestCommon = cp;
+            }
+          }
+        }
+      });
+
+      // 4. En yakın ortak eczanenin ilçesini otomatik belirleyip dropdownları güncelleyelim
+      const finalCity = nearestCity;
+      const finalDistrict = closestCommon.dist || getDefaultDistrictForCity(finalCity);
+
+      setCity(finalCity);
+      setDistrict(finalDistrict);
+      setSearchInitiated(true);
+
+      // Sadece o ilçedeki eczaneleri yükleyelim
+      if (searchMode === 'duty') {
+        const dutyResult = await fetchDutyPharmacies(finalCity, finalDistrict);
+        let fetchedPharmacies = dutyResult.pharmacies;
+
+        // O ilçedeki ortak eczaneleri filtrele
+        const districtCommon = commonPharmacies.filter(
+          (cp) => toSlug(cp.dist || '') === toSlug(finalDistrict)
         );
 
-        if (matchedCity) {
-          const finalCity = matchedCity;
-          const matchedDistrict = TURKEY_CITIES[matchedCity].find(
-            (d) => d.toLowerCase() === cleanedDistrict.toLowerCase()
-          );
-          const finalDistrict = matchedDistrict || TURKEY_CITIES[matchedCity][0];
-
-          setCity(finalCity);
-          setDistrict(finalDistrict);
-          setSearchInitiated(true);
-
-          const result = searchMode === 'duty'
-            ? await fetchDutyPharmacies(finalCity, finalDistrict)
-            : await fetchCommonPharmacies(finalCity, finalDistrict, latitude, longitude);
-          setPharmacies(result.pharmacies);
-          setIsDemo(result.isDemo);
+        if (districtCommon.length > 0) {
+          const commonMap = new Map<string, string>();
+          districtCommon.forEach(cp => {
+            if (cp.loc) {
+              commonMap.set(cleanNameForMatching(cp.name), cp.loc);
+            }
+          });
+          fetchedPharmacies = fetchedPharmacies.map(dp => {
+            const cleanedName = cleanNameForMatching(dp.name);
+            let matchedLoc = commonMap.get(cleanedName);
+            if (!matchedLoc) {
+              for (const [key, value] of commonMap.entries()) {
+                if (cleanedName.includes(key) || key.includes(cleanedName)) {
+                  matchedLoc = value;
+                  break;
+                }
+              }
+            }
+            if (matchedLoc) {
+              return { ...dp, loc: matchedLoc };
+            }
+            return dp;
+          });
         }
+        setPharmacies(fetchedPharmacies);
+        setIsDemo(dutyResult.isDemo);
+      } else {
+        const commonResult = await fetchCommonPharmacies(finalCity, finalDistrict, latitude, longitude);
+        setPharmacies(commonResult.pharmacies);
+        setIsDemo(commonResult.isDemo);
       }
     } catch (err) {
       Alert.alert(
@@ -200,20 +353,7 @@ export default function PharmaciesScreen() {
     }
   };
 
-  // Haversine Mesafe Hesaplama
-  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371; // Dünya yarıçapı (km)
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * Math.PI / 180) *
-        Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  };
+
 
   const getDistanceText = (pharmacyLoc?: string): string | null => {
     if (!userCoords || !pharmacyLoc) return null;
@@ -289,12 +429,12 @@ export default function PharmaciesScreen() {
 
   // İl listesini arama filtresine göre süzme
   const filteredCities = Object.keys(TURKEY_CITIES).filter((c) =>
-    c.toLowerCase().includes(citySearch.toLowerCase())
+    normalizeText(c).includes(normalizeText(citySearch))
   );
 
   // İlçe listesini arama filtresine göre süzme
   const filteredDistricts = (TURKEY_CITIES[city] || []).filter((d) =>
-    d.toLowerCase().includes(districtSearch.toLowerCase())
+    normalizeText(d).includes(normalizeText(districtSearch))
   );
 
   return (
@@ -304,7 +444,7 @@ export default function PharmaciesScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backBtnText}>← {t(lang, 'addMedication.back')}</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{lang === 'tr' ? '🏥 Nöbetçi Eczaneler' : '🏥 Duty Pharmacies'}</Text>
+        <Text style={styles.headerTitle}>{lang === 'tr' ? '⚕️ Nöbetçi Eczaneler' : '⚕️ Duty Pharmacies'}</Text>
         <View style={{ width: 60 }} />
       </View>
 
@@ -349,18 +489,29 @@ export default function PharmaciesScreen() {
             }}
           >
             <Text style={styles.selectorLabel}>{lang === 'tr' ? 'İL' : 'CITY'}</Text>
-            <Text style={styles.selectorValue}>{city} ▾</Text>
+            <Text style={styles.selectorValue}>
+              {city ? `${city} ▾` : (lang === 'tr' ? 'İl Seçin ▾' : 'Select City ▾')}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.selectorBtn}
             onPress={() => {
+              if (!city) {
+                Alert.alert(
+                  lang === 'tr' ? 'Uyarı' : 'Warning',
+                  lang === 'tr' ? 'Lütfen önce bir il seçin.' : 'Please select a city first.'
+                );
+                return;
+              }
               setDistrictSearch('');
               setShowDistrictModal(true);
             }}
           >
             <Text style={styles.selectorLabel}>{lang === 'tr' ? 'İLÇE' : 'DISTRICT'}</Text>
-            <Text style={styles.selectorValue}>{district} ▾</Text>
+            <Text style={styles.selectorValue}>
+              {district ? `${district} ▾` : (lang === 'tr' ? 'İlçe Seçin ▾' : 'Select District ▾')}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -392,7 +543,7 @@ export default function PharmaciesScreen() {
             </View>
           ) : getSortedPharmacies().length === 0 ? (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyStateEmoji}>🏥</Text>
+              <Text style={styles.emptyStateEmoji}>⚕️</Text>
               <Text style={styles.emptyStateText}>
                 {searchMode === 'duty'
                   ? (lang === 'tr' ? 'Bu bölgede nöbetçi eczane bulunamadı.' : 'No duty pharmacies found in this region.')
@@ -407,7 +558,7 @@ export default function PharmaciesScreen() {
                   <View style={styles.pharmacyHeader}>
                     <View style={styles.pharmacyTitleContainer}>
                       <View style={styles.pharmacyIconBadge}>
-                        <Text style={{ fontSize: 14 }}>🏥</Text>
+                        <Text style={{ fontSize: 14 }}>⚕️</Text>
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.pharmacyName}>{item.name}</Text>
@@ -455,78 +606,106 @@ export default function PharmaciesScreen() {
       )}
 
       {/* Şehir Seçim Modalı */}
-      <Modal visible={showCityModal} animationType="slide" transparent={true}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{lang === 'tr' ? 'İl Seçin' : 'Select City'}</Text>
-              <TouchableOpacity onPress={() => setShowCityModal(false)} style={styles.modalCloseBtn}>
-                <Text style={styles.modalCloseText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              style={styles.modalSearch}
-              placeholder={lang === 'tr' ? 'İl adı ara...' : 'Search city...'}
-              placeholderTextColor={colors.textMuted}
-              value={citySearch}
-              onChangeText={setCitySearch}
-            />
-
-            <ScrollView style={styles.modalList} keyboardShouldPersistTaps="handled">
-              {filteredCities.map((c) => (
-                <TouchableOpacity
-                  key={c}
-                  style={[styles.modalItem, c === city && styles.modalItemActive]}
-                  onPress={() => {
-                    setCity(c);
-                    setDistrict(TURKEY_CITIES[c][0]); // Şehir değiştiğinde ilk ilçeyi otomatik seç
-                    setShowCityModal(false);
-                  }}
-                >
-                  <Text style={[styles.modalItemText, c === city && styles.modalItemTextActive]}>{c}</Text>
+      <Modal 
+        visible={showCityModal} 
+        animationType="slide" 
+        transparent={true}
+        onRequestClose={() => setShowCityModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <TouchableOpacity 
+            style={styles.modalOverlay} 
+            activeOpacity={1} 
+            onPress={() => setShowCityModal(false)}
+          >
+            <TouchableOpacity activeOpacity={1} style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, SPACING.xl) }]}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>{lang === 'tr' ? 'İl Seçin' : 'Select City'}</Text>
+                <TouchableOpacity onPress={() => setShowCityModal(false)} style={styles.modalCloseBtn}>
+                  <Text style={styles.modalCloseText}>✕</Text>
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
+              </View>
+
+              <TextInput
+                style={styles.modalSearch}
+                placeholder={lang === 'tr' ? 'İl adı ara...' : 'Search city...'}
+                placeholderTextColor={colors.textMuted}
+                value={citySearch}
+                onChangeText={setCitySearch}
+              />
+
+              <ScrollView style={styles.modalList} keyboardShouldPersistTaps="handled">
+                {filteredCities.map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[styles.modalItem, c === city && styles.modalItemActive]}
+                    onPress={() => {
+                      setCity(c);
+                      setDistrict(''); // Clear district when city changes
+                      setShowCityModal(false);
+                    }}
+                  >
+                    <Text style={[styles.modalItemText, c === city && styles.modalItemTextActive]}>{c}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* İlçe Seçim Modalı */}
-      <Modal visible={showDistrictModal} animationType="slide" transparent={true}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{lang === 'tr' ? 'İlçe Seçin' : 'Select District'}</Text>
-              <TouchableOpacity onPress={() => setShowDistrictModal(false)} style={styles.modalCloseBtn}>
-                <Text style={styles.modalCloseText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              style={styles.modalSearch}
-              placeholder={lang === 'tr' ? 'İlçe adı ara...' : 'Search district...'}
-              placeholderTextColor={colors.textMuted}
-              value={districtSearch}
-              onChangeText={setDistrictSearch}
-            />
-
-            <ScrollView style={styles.modalList} keyboardShouldPersistTaps="handled">
-              {filteredDistricts.map((d) => (
-                <TouchableOpacity
-                  key={d}
-                  style={[styles.modalItem, d === district && styles.modalItemActive]}
-                  onPress={() => {
-                    setDistrict(d);
-                    setShowDistrictModal(false);
-                  }}
-                >
-                  <Text style={[styles.modalItemText, d === district && styles.modalItemTextActive]}>{d}</Text>
+      <Modal 
+        visible={showDistrictModal} 
+        animationType="slide" 
+        transparent={true}
+        onRequestClose={() => setShowDistrictModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <TouchableOpacity 
+            style={styles.modalOverlay} 
+            activeOpacity={1} 
+            onPress={() => setShowDistrictModal(false)}
+          >
+            <TouchableOpacity activeOpacity={1} style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, SPACING.xl) }]}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>{lang === 'tr' ? 'İlçe Seçin' : 'Select District'}</Text>
+                <TouchableOpacity onPress={() => setShowDistrictModal(false)} style={styles.modalCloseBtn}>
+                  <Text style={styles.modalCloseText}>✕</Text>
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
+              </View>
+
+              <TextInput
+                style={styles.modalSearch}
+                placeholder={lang === 'tr' ? 'İlçe adı ara...' : 'Search district...'}
+                placeholderTextColor={colors.textMuted}
+                value={districtSearch}
+                onChangeText={setDistrictSearch}
+              />
+
+              <ScrollView style={styles.modalList} keyboardShouldPersistTaps="handled">
+                {filteredDistricts.map((d) => (
+                  <TouchableOpacity
+                    key={d}
+                    style={[styles.modalItem, d === district && styles.modalItemActive]}
+                    onPress={() => {
+                      setDistrict(d);
+                      setShowDistrictModal(false);
+                    }}
+                  >
+                    <Text style={[styles.modalItemText, d === district && styles.modalItemTextActive]}>{d}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -809,6 +988,10 @@ const getStyles = (colors: any) =>
       backgroundColor: 'rgba(0,0,0,0.6)',
       justifyContent: 'flex-end',
     },
+    keyboardAvoiding: {
+      width: '100%',
+      justifyContent: 'flex-end',
+    },
     modalContent: {
       backgroundColor: colors.background,
       borderTopLeftRadius: 24,
@@ -854,7 +1037,7 @@ const getStyles = (colors: any) =>
       marginBottom: SPACING.md,
     },
     modalList: {
-      maxHeight: 400,
+      maxHeight: 250,
     },
     modalItem: {
       paddingVertical: SPACING.lg,

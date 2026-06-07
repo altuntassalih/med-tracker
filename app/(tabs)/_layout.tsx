@@ -22,14 +22,14 @@ function TabIcon({ name, label, focused, colors }: TabIconProps) {
     ]}>
       <Ionicons 
         name={name} 
-        size={focused ? 32 : 26} 
+        size={focused ? 28 : 24} 
         color={focused ? colors.primaryLight : colors.textMuted} 
       />
       <Text 
         style={[
           styles.tabLabel, 
           { color: colors.textMuted },
-          focused && { color: colors.primaryLight, fontWeight: '800', fontSize: 13 }
+          focused && { color: colors.primaryLight, fontWeight: '800', fontSize: 12 }
         ]}
         numberOfLines={1}
         adjustsFontSizeToFit
@@ -55,9 +55,9 @@ export default function TabLayout() {
           backgroundColor: colors.surface,
           borderTopColor: colors.primary + '44',
           borderTopWidth: 1,
-          height: 100 + insets.bottom,
-          paddingBottom: insets.bottom + 20,
-          paddingTop: 15,
+          height: 68 + (insets.bottom > 0 ? insets.bottom : 8),
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 8,
+          paddingTop: 8,
           elevation: 20,
           shadowColor: '#000',
           shadowOffset: { width: 0, height: -10 },

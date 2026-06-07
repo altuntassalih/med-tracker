@@ -24,7 +24,7 @@ export default function ProfileSettingsScreen() {
   const { showAlert } = useStore();
   const [name, setName] = useState(activeProfile?.name || user?.displayName || '');
   const [avatar, setAvatar] = useState<string>(activeProfile?.avatar || '👤');
-  const [gender, setGender] = useState<'female' | 'male' | 'other'>(activeProfile?.gender || GENDER_FEMALE);
+  const [gender, setGender] = useState<'female' | 'male' | 'other'>(((activeProfile?.gender || GENDER_FEMALE).toLowerCase() as 'female' | 'male' | 'other'));
   const [age, setAge] = useState(activeProfile?.age ? String(activeProfile.age) : '');
   const [height, setHeight] = useState(activeProfile?.height ? String(activeProfile.height) : '');
   const [weight, setWeight] = useState(activeProfile?.weight ? String(activeProfile.weight) : '');
@@ -201,29 +201,29 @@ export default function ProfileSettingsScreen() {
             <Text style={styles.label}>{t(language as LanguageCode, 'profileUpdate.genderLabel')}</Text>
             <View style={styles.genderOptionsRow}>
               <TouchableOpacity 
-                style={[styles.genderBtn, gender === GENDER_FEMALE && styles.genderBtnActive]} 
+                style={gender === GENDER_FEMALE ? [styles.genderBtn, styles.genderBtnActive] : styles.genderBtn} 
                 onPress={() => setGender(GENDER_FEMALE)}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.genderBtnText, gender === GENDER_FEMALE && styles.genderBtnTextActive]}>
+                <Text style={gender === GENDER_FEMALE ? [styles.genderBtnText, styles.genderBtnTextActive] : styles.genderBtnText}>
                   👩 {t(language as LanguageCode, 'profileUpdate.genderFemale')}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.genderBtn, gender === GENDER_MALE && styles.genderBtnActive]} 
+                style={gender === GENDER_MALE ? [styles.genderBtn, styles.genderBtnActive] : styles.genderBtn} 
                 onPress={() => setGender(GENDER_MALE)}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.genderBtnText, gender === GENDER_MALE && styles.genderBtnTextActive]}>
+                <Text style={gender === GENDER_MALE ? [styles.genderBtnText, styles.genderBtnTextActive] : styles.genderBtnText}>
                   👨 {t(language as LanguageCode, 'profileUpdate.genderMale')}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.genderBtn, gender === GENDER_OTHER && styles.genderBtnActive]} 
+                style={gender === GENDER_OTHER ? [styles.genderBtn, styles.genderBtnActive] : styles.genderBtn} 
                 onPress={() => setGender(GENDER_OTHER)}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.genderBtnText, gender === GENDER_OTHER && styles.genderBtnTextActive]}>
+                <Text style={gender === GENDER_OTHER ? [styles.genderBtnText, styles.genderBtnTextActive] : styles.genderBtnText}>
                   👤 {t(language as LanguageCode, 'profileUpdate.genderOther')}
                 </Text>
               </TouchableOpacity>

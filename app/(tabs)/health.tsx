@@ -801,7 +801,7 @@ const getStyles = (colors: any) => StyleSheet.create({
     fontWeight: 'bold',
   },
   scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 60 },
+  scrollContent: { paddingBottom: 40 },
   sectionContainer: {
     padding: SPACING.md,
     gap: SPACING.md,
