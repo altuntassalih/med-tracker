@@ -702,20 +702,26 @@ export default function HomeScreen() {
     medications.forEach((med) => {
       const depletionStatus = checkIfMedDepletesOnDate(med, selectedDate);
       if (depletionStatus === 'depleted_on') {
-        futureMedWarnings.push({
-          med,
-          status: 'depleted_on',
-          remaining: 0,
-          key: `${med.id}-future-depleted-on-${selectedDate}`
-        });
-      } else if (depletionStatus === 'depleted_before') {
-        if (diffDays < 7) {
+        const key = `${med.id}-future-depleted-on-${selectedDate}`;
+        if (!(dismissedStockWarnings || []).includes(key)) {
           futureMedWarnings.push({
             med,
-            status: 'depleted_before',
+            status: 'depleted_on',
             remaining: 0,
-            key: `${med.id}-future-depleted-before-${selectedDate}`
+            key
           });
+        }
+      } else if (depletionStatus === 'depleted_before') {
+        if (diffDays < 7) {
+          const key = `${med.id}-future-depleted-before-${selectedDate}`;
+          if (!(dismissedStockWarnings || []).includes(key)) {
+            futureMedWarnings.push({
+              med,
+              status: 'depleted_before',
+              remaining: 0,
+              key
+            });
+          }
         }
       }
     });
@@ -753,96 +759,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Gelecek Tarihli Stok Uyarıları */}
-        {selectedDate > todayStr && futureMedWarnings.length > 0 && (
-          <View style={styles.section}>
-            {futureMedWarnings.map((warning) => (
-              <View key={warning.key} style={[styles.warningCard, styles.warningCardDanger]}>
-                <View style={styles.warningCardHeader}>
-                  <Text style={{ fontSize: 24 }}>
-                    {warning.status === 'depleted_on' ? '⚠️' : '❌'}
-                  </Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.warningCardTitle}>
-                      {warning.status === 'depleted_on'
-                        ? t(language as LanguageCode, 'home.stockDepletingOnDate')
-                        : t(language as LanguageCode, 'home.stockDepletedBeforeDate')}
-                    </Text>
-                    <Text style={styles.warningCardText}>
-                      {warning.status === 'depleted_on'
-                        ? (language === 'tr'
-                          ? `"${warning.med.name}" ilacının stoku bu tarihte bitecek!`
-                          : `"${warning.med.name}" stock will run out on this date!`)
-                        : (language === 'tr'
-                          ? `"${warning.med.name}" ilacının stoku bu tarihten önce tükenmiş olacak!`
-                          : `"${warning.med.name}" stock will have run out before this date!`)}
-                    </Text>
-                  </View>
-                </View>
-                <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm }}>
-                  <TouchableOpacity
-                    style={[styles.warningCardPharmacyBtn, { flex: 1 }]}
-                    onPress={() => router.push('/pharmacies')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.warningCardPharmacyBtnText}>
-                      🏥 {language === 'tr' ? 'Eczane Bul' : 'Find Pharmacy'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
 
-        {/* Kritik Stok Uyarıları */}
-        {selectedDate === todayStr && medWarnings.length > 0 && (
-          <View style={styles.section}>
-            {medWarnings.map((warning) => (
-              <View key={warning.key} style={[styles.warningCard, (warning.threshold === STOCK_THRESHOLD_CRITICAL || warning.threshold === 0) && styles.warningCardDanger]}>
-                <View style={styles.warningCardHeader}>
-                  <Text style={styles.warningCardIcon}>⚠️</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.warningCardTitle}>
-                      {warning.threshold === 0
-                        ? (language === 'tr' ? 'Stok Bugün Bitecek!' : 'Stock Depleting Today!')
-                        : (language === 'tr' ? 'Kritik Stok Uyarısı' : 'Critical Stock Alert')}
-                    </Text>
-                    <Text style={styles.warningCardText}>
-                      {warning.threshold === 0
-                        ? (language === 'tr'
-                          ? `"${warning.med.name}" için kalan stok ${warning.remaining} adettir ve bugün alınacak dozlarla stok tükenecektir!`
-                          : `Remaining stock for "${warning.med.name}" is ${warning.remaining} units and will run out with today's doses!`)
-                        : (language === 'tr'
-                          ? `"${warning.med.name}" için kalan stok ${warning.remaining} adettir! (Kritik Eşik: ${warning.threshold})`
-                          : `Remaining stock for "${warning.med.name}" is ${warning.remaining} units! (Critical Threshold: ${warning.threshold})`)}
-                    </Text>
-                  </View>
-                </View>
-                <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm }}>
-                  <TouchableOpacity
-                    style={styles.warningCardPharmacyBtn}
-                    onPress={() => router.push('/pharmacies')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.warningCardPharmacyBtnText}>
-                      🏥 {language === 'tr' ? 'Eczane Bul' : 'Find Pharmacy'}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.warningCardDismissBtn, { flex: 1, marginTop: 0 }, (warning.threshold === STOCK_THRESHOLD_CRITICAL || warning.threshold === 0) && styles.warningCardDismissBtnDanger]}
-                    onPress={() => dismissStockWarning(warning.key)}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.warningCardDismissText, (warning.threshold === STOCK_THRESHOLD_CRITICAL || warning.threshold === 0) && styles.warningCardDismissTextDanger]}>
-                      {language === 'tr' ? 'Tamam' : 'OK'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
 
         {profiles.length > 0 && (
           <View style={styles.section}>
@@ -1014,6 +931,123 @@ export default function HomeScreen() {
             );
           })}
         </View>
+
+        {/* Gelecek Tarihli Stok Uyarıları */}
+        {selectedDate > todayStr && futureMedWarnings.length > 0 && (
+          <View style={[styles.section, { marginTop: SPACING.md, marginBottom: 0 }]}>
+            {futureMedWarnings.map((warning) => (
+              <View key={warning.key} style={[styles.slotCard, { borderColor: colors.danger + '88', backgroundColor: colors.danger + '04' }]}>
+                {/* Warning Chip */}
+                <View style={[styles.timeChip, { backgroundColor: colors.danger + '18' }]}>
+                  <Text style={[styles.timeText, { color: colors.danger }]}>
+                    {warning.status === 'depleted_on' ? '⚠️ STOK' : '❌ STOK'}
+                  </Text>
+                </View>
+
+                {/* Warning Information */}
+                <TouchableOpacity
+                  style={styles.upcomingInfo}
+                  onPress={() => router.push({ pathname: '/medication-detail', params: { id: warning.med.id } })}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.upcomingName}>{warning.med.name}</Text>
+                  <Text style={styles.upcomingDose}>
+                    {warning.status === 'depleted_on'
+                      ? (language === 'tr' ? 'Stok bu tarihte tükenecek!' : 'Stock depleting on this date!')
+                      : (language === 'tr' ? 'Stok bu tarihten önce bitecek!' : 'Stock depleted before this date!')}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Action Buttons */}
+                <View style={styles.actionButtons}>
+                  <TouchableOpacity
+                    style={styles.postponeBtn}
+                    onPress={() => router.push('/pharmacies')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.postponeBtnEmoji}>🏥</Text>
+                    <Text style={styles.postponeBtnText}>
+                      {language === 'tr' ? 'Eczane' : 'Pharmacy'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.takeBtn, { backgroundColor: colors.danger + '18', borderColor: colors.danger }]}
+                    onPress={() => dismissStockWarning(warning.key)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.takeBtnEmoji, { color: colors.danger }]}>✓</Text>
+                    <Text style={[styles.takeBtnText, { color: colors.danger }]}>
+                      {language === 'tr' ? 'Tamam' : 'OK'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Kritik Stok Uyarıları */}
+        {selectedDate === todayStr && medWarnings.length > 0 && (
+          <View style={[styles.section, { marginTop: SPACING.md, marginBottom: 0 }]}>
+            {medWarnings.map((warning) => {
+              const isDanger = warning.threshold === STOCK_THRESHOLD_CRITICAL || warning.threshold === 0;
+              return (
+                <View key={warning.key} style={[styles.slotCard, { borderColor: isDanger ? colors.danger + '88' : colors.warning + '88', backgroundColor: isDanger ? colors.danger + '04' : colors.warning + '04' }]}>
+                  {/* Warning Chip */}
+                  <View style={[styles.timeChip, { backgroundColor: isDanger ? colors.danger + '18' : colors.warning + '18' }]}>
+                    <Text style={[styles.timeText, { color: isDanger ? colors.danger : colors.warning }]}>
+                      ⚠️ STOK
+                    </Text>
+                  </View>
+
+                  {/* Warning Information */}
+                  <TouchableOpacity
+                    style={styles.upcomingInfo}
+                    onPress={() => router.push({ pathname: '/medication-detail', params: { id: warning.med.id } })}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.upcomingName}>{warning.med.name}</Text>
+                    <Text style={styles.upcomingDose}>
+                      {warning.threshold === 0
+                        ? (language === 'tr' ? 'Bugün tükenecek!' : 'Depletes today!')
+                        : (language === 'tr' ? `Kritik stok! Kalan: ${warning.remaining}` : `Critical stock! Left: ${warning.remaining}`)}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Action Buttons */}
+                  <View style={styles.actionButtons}>
+                    <TouchableOpacity
+                      style={styles.postponeBtn}
+                      onPress={() => router.push('/pharmacies')}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.postponeBtnEmoji}>🏥</Text>
+                      <Text style={styles.postponeBtnText}>
+                        {language === 'tr' ? 'Eczane' : 'Pharmacy'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.takeBtn,
+                        {
+                          backgroundColor: isDanger ? colors.danger + '18' : colors.warning + '18',
+                          borderColor: isDanger ? colors.danger : colors.warning
+                        }
+                      ]}
+                      onPress={() => dismissStockWarning(warning.key)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[styles.takeBtnEmoji, { color: isDanger ? colors.danger : colors.warning }]}>✓</Text>
+                      <Text style={[styles.takeBtnText, { color: isDanger ? colors.danger : colors.warning }]}>
+                        {language === 'tr' ? 'Tamam' : 'OK'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
 
         <View style={styles.statsRow}>
           <View style={[styles.statCard, { borderLeftColor: colors.primary }]}>
