@@ -139,9 +139,9 @@ export default function ProfilesScreen() {
                           <View style={styles.statItem}>
                             <Text style={styles.statLabel}>{lang === 'tr' ? 'CİNSİYET' : 'GENDER'}</Text>
                             <Text style={styles.statValue}>
-                              {profile.gender === 'female' 
+                              {profile.gender === 'female' || profile.gender?.toLowerCase() === 'kadın' || profile.gender?.toLowerCase() === 'kadin'
                                 ? (lang === 'tr' ? 'Kadın' : 'Female') 
-                                : profile.gender === 'male' 
+                                : profile.gender === 'male' || profile.gender?.toLowerCase() === 'erkek'
                                   ? (lang === 'tr' ? 'Erkek' : 'Male') 
                                   : (lang === 'tr' ? 'Diğer' : 'Other')}
                             </Text>

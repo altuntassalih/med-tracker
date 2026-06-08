@@ -189,9 +189,9 @@ export default function HealthScreen() {
       }
 
       let summaryText = `Profil Adı: ${activeProfile?.name}\n`;
-      const genderStr = activeProfile?.gender === 'female'
+      const genderStr = activeProfile?.gender === 'female' || activeProfile?.gender?.toLowerCase() === 'kadın' || activeProfile?.gender?.toLowerCase() === 'kadin'
         ? (lang === 'tr' ? 'Kadın' : 'Female')
-        : activeProfile?.gender === 'male'
+        : activeProfile?.gender === 'male' || activeProfile?.gender?.toLowerCase() === 'erkek'
           ? (lang === 'tr' ? 'Erkek' : 'Male')
           : activeProfile?.gender === 'other'
             ? (lang === 'tr' ? 'Diğer' : 'Other')

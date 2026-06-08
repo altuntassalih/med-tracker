@@ -12,6 +12,14 @@ import { t } from '../constants/translations';
 import type { LanguageCode } from '../constants/translations';
 import { calculateBmi } from '../utils/bmi';
 
+const getNormalizedGender = (genderVal?: string): 'female' | 'male' | 'other' => {
+  if (!genderVal) return 'female';
+  const val = genderVal.toLowerCase().trim();
+  if (val === 'male' || val === 'erkek') return 'male';
+  if (val === 'female' || val === 'kadın' || val === 'kadin') return 'female';
+  return 'other';
+};
+
 export default function ProfileSettingsScreen() {
   const { user, setUser, profiles, setProfiles, language, activeProfileId, theme } = useStore();
   
@@ -24,7 +32,7 @@ export default function ProfileSettingsScreen() {
   const { showAlert } = useStore();
   const [name, setName] = useState(activeProfile?.name || user?.displayName || '');
   const [avatar, setAvatar] = useState<string>(activeProfile?.avatar || '👤');
-  const [gender, setGender] = useState<'female' | 'male' | 'other'>(((activeProfile?.gender || GENDER_FEMALE).toLowerCase() as 'female' | 'male' | 'other'));
+  const [gender, setGender] = useState<'female' | 'male' | 'other'>(getNormalizedGender(activeProfile?.gender));
   const [age, setAge] = useState(activeProfile?.age ? String(activeProfile.age) : '');
   const [height, setHeight] = useState(activeProfile?.height ? String(activeProfile.height) : '');
   const [weight, setWeight] = useState(activeProfile?.weight ? String(activeProfile.weight) : '');
