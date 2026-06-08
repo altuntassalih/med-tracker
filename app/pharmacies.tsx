@@ -160,6 +160,7 @@ export default function PharmaciesScreen() {
               }
             });
             fetchedPharmacies = fetchedPharmacies.map(dp => {
+              if (dp.loc) return dp; // Skip matching if location is already set by backend
               const cleanedName = cleanNameForMatching(dp.name);
               let matchedLoc = commonMap.get(cleanedName);
               if (!matchedLoc) {
@@ -320,6 +321,7 @@ export default function PharmaciesScreen() {
             }
           });
           fetchedPharmacies = fetchedPharmacies.map(dp => {
+            if (dp.loc) return dp; // Skip matching if location is already set by backend
             const cleanedName = cleanNameForMatching(dp.name);
             let matchedLoc = commonMap.get(cleanedName);
             if (!matchedLoc) {

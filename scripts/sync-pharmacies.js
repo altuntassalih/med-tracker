@@ -179,6 +179,88 @@ async function fetchDutyFromCollectAPI(city, district) {
   }));
 }
 
+const normalizeText = (text) => {
+  if (!text) return '';
+  return text
+    .toString()
+    .replace(/İ/g, 'i')
+    .replace(/I/g, 'ı')
+    .toLowerCase()
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ş/g, 's')
+    .replace(/ı/g, 'i')
+    .replace(/ö/g, 'o')
+    .replace(/ç/g, 'c')
+    .replace(/â/g, 'a')
+    .replace(/î/g, 'i')
+    .trim();
+};
+
+const cleanNameForMatching = (name) => {
+  let cleaned = normalizeText(name);
+  cleaned = cleaned.replace(/[^a-z0-9]/g, '');
+  cleaned = cleaned
+    .replace(/eczanesi$/, '')
+    .replace(/eczane$/, '')
+    .replace(/ecz$/, '')
+    .replace(/^eczanesi/, '')
+    .replace(/^eczane/, '')
+    .replace(/^ecz/, '');
+  return cleaned;
+};
+
+/**
+ * Nöbetçi eczanelerin koordinatlarını (loc) ortak eczaneler listesinden bularak doldurur
+ */
+async function enrichDutyPharmaciesWithCoords(city, district, dutyPharmaciesList) {
+  const citySlug = toSlug(city);
+  const districtSlug = toSlug(district);
+  
+  try {
+    const docRef = db.collection(DB_COLLECTIONS.ALL_PHARMACIES).doc(`${citySlug}_${districtSlug}`);
+    const docSnap = await docRef.get();
+    
+    if (docSnap.exists) {
+      const data = docSnap.data();
+      const commonList = Array.isArray(data.pharmacies) ? data.pharmacies : [];
+      
+      const commonMap = new Map();
+      commonList.forEach(cp => {
+        if (cp.loc) {
+          commonMap.set(cleanNameForMatching(cp.name), cp.loc);
+        }
+      });
+      
+      return dutyPharmaciesList.map(dp => {
+        if (dp.loc) return dp; // Zaten koordinatı varsa ellemeyelim
+        
+        const cleanedName = cleanNameForMatching(dp.name);
+        let matchedLoc = commonMap.get(cleanedName);
+        
+        if (!matchedLoc) {
+          for (const [key, value] of commonMap.entries()) {
+            if (cleanedName.includes(key) || key.includes(cleanedName)) {
+              matchedLoc = value;
+              break;
+            }
+          }
+        }
+        
+        if (matchedLoc) {
+          return { ...dp, loc: matchedLoc };
+        }
+        
+        return dp;
+      });
+    }
+  } catch (err) {
+    console.error(`Eczane koordinatları eşleştirilirken hata oluştu (${city}/${district}):`, err.message);
+  }
+  
+  return dutyPharmaciesList;
+}
+
 /** NÖBETÇİ ECZANE GÜNCELLEME İŞİ */
 async function syncDutyPharmacies() {
   console.log('--- Nöbetçi Eczaneler Senkronizasyonu Başlatıldı ---');
@@ -231,6 +313,9 @@ async function syncDutyPharmacies() {
           console.log(`    -> CollectAPI sorgusu yapılıyor: ${city} / ${district}...`);
           const districtMeds = await fetchDutyFromCollectAPI(city, district);
           
+          // Eczaneleri koordinatlarıyla zenginleştir
+          const enrichedMeds = await enrichDutyPharmaciesWithCoords(city, district, districtMeds);
+          
           const citySlug = toSlug(city);
           const districtSlug = toSlug(district);
           const docRef = db.collection(DB_COLLECTIONS.DUTY_PHARMACIES).doc(`${citySlug}_${districtSlug}`);
@@ -238,7 +323,7 @@ async function syncDutyPharmacies() {
           batch.set(docRef, {
             city,
             district,
-            pharmacies: districtMeds,
+            pharmacies: enrichedMeds,
             updatedAt: Date.now()
           }, { merge: true });
 
@@ -270,23 +355,25 @@ async function syncDutyPharmacies() {
       const batch = db.batch();
       let count = 0;
 
-      districtsInCity.forEach(d => {
+      // Asenkron koordinat zenginleştirmesi için for...of kullanıyoruz
+      const districtsWithMeds = districtsInCity.filter(d => (groupedByDistrict[d] || []).length > 0);
+      for (const d of districtsWithMeds) {
         const districtMeds = groupedByDistrict[d] || [];
-        if (districtMeds.length > 0) {
-          const citySlug = toSlug(city);
-          const districtSlug = toSlug(d);
-          const docRef = db.collection(DB_COLLECTIONS.DUTY_PHARMACIES).doc(`${citySlug}_${districtSlug}`);
-          
-          batch.set(docRef, {
-            city,
-            district: d,
-            pharmacies: districtMeds,
-            updatedAt: Date.now()
-          }, { merge: true });
+        const enrichedMeds = await enrichDutyPharmaciesWithCoords(city, d, districtMeds);
+        
+        const citySlug = toSlug(city);
+        const districtSlug = toSlug(d);
+        const docRef = db.collection(DB_COLLECTIONS.DUTY_PHARMACIES).doc(`${citySlug}_${districtSlug}`);
+        
+        batch.set(docRef, {
+          city,
+          district: d,
+          pharmacies: enrichedMeds,
+          updatedAt: Date.now()
+        }, { merge: true });
 
-          count++;
-        }
-      });
+        count++;
+      }
 
       if (count > 0) {
         await batch.commit();
