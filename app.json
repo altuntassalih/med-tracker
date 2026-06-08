@@ -2,11 +2,11 @@
   "expo": {
     "name": "MedTracker",
     "slug": "med-tracker",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "sdkVersion": "54.0.0",
     "android": {
       "package": "tr.com.salihaltuntas.medtracker",
-      "versionCode": 4,
+      "versionCode": 5,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#0F172A"

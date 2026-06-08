@@ -200,6 +200,6 @@ export const GENDER_FEMALE = 'female';
 export const GENDER_OTHER = 'other';
 
 // Uygulama Versiyonu Sabiti
-export const APP_VERSION = '1.0.4';
+export const APP_VERSION = '1.0.5';
 
 
