@@ -57,6 +57,8 @@ const COLLECTAPI_KEY = process.env.EXPO_PUBLIC_COLLECTAPI_KEY || '';
 const NOSYAPI_KEY = process.env.EXPO_PUBLIC_NOSYAPI_KEY || '';
 const NOSYAPI_BASE_URL = 'https://www.nosyapi.com/apiv2/service';
 const CLOUDFLARE_PROXY_URL = process.env.CLOUDFLARE_PROXY_URL || '';
+const SCRAPER_BASE_URL = 'https://www.milliyet.com.tr/nobetci-eczaneler';
+const SCRAPER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 /** Türkçe karakterleri İngilizce karşılıklarıyla değiştirip URL uyumlu hale getirir */
 const toSlug = (text) => {
@@ -77,10 +79,10 @@ const toSlug = (text) => {
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-/** HTML Scraper: eczaneler.gen.tr sitesinden ildeki nöbetçi eczaneleri çeker */
+/** HTML Scraper: milliyet.com.tr sitesinden ildeki nöbetçi eczaneleri çeker */
 async function scrapeDutyPharmaciesFromWeb(city) {
   const citySlug = toSlug(city);
-  const targetUrl = `https://www.eczaneler.gen.tr/nobetci-${citySlug}`;
+  const targetUrl = `${SCRAPER_BASE_URL}/${citySlug}/`;
   
   const url = CLOUDFLARE_PROXY_URL 
     ? `${CLOUDFLARE_PROXY_URL}?url=${encodeURIComponent(targetUrl)}`
@@ -88,7 +90,7 @@ async function scrapeDutyPharmaciesFromWeb(city) {
   
   const response = await fetch(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      'User-Agent': SCRAPER_USER_AGENT
     }
   });
 
@@ -100,43 +102,43 @@ async function scrapeDutyPharmaciesFromWeb(city) {
   const $ = cheerio.load(html);
   const pharmacies = [];
 
-  // Sadece aktif olan tab paneli (bugünün nöbetçileri) içindeki eczaneleri seç
-  let container = $('.tab-pane.active');
-  if (container.length === 0) {
-    // Eğer active class'lı tab bulunamazsa fallback olarak tüm sayfayı tara
-    container = $('body');
-  }
-
-  container.find('td.border-bottom').each((i, el) => {
-    const name = $(el).find('span.isim').text().trim().toUpperCase().replace(/İ/g, 'İ').replace(/I/g, 'I');
+  $('.ecz-module-pharmacy-info').each((i, el) => {
+    const name = $(el).find('.ecz-module-pharmacy-name').text().trim().toUpperCase().replace(/İ/g, 'İ').replace(/I/g, 'I');
     if (!name) return;
 
-    const addressDiv = $(el).find('.col-lg-6');
-    const addressClone = addressDiv.clone();
-    addressClone.find('div').remove();
-    let address = addressClone.text().trim();
-    
-    const directions = addressDiv.find('.font-italic').text().trim();
-    if (directions) {
-      address += ` (${directions})`;
+    const subtitle = $(el).find('.ecz-module-pharmacy-subtitle').text().trim();
+    let district = '';
+    if (subtitle.includes('/')) {
+      district = subtitle.split('/').pop().trim();
     }
 
-    const district = addressDiv.find('.bg-info').text().trim();
-    
-    let phone = '';
-    $(el).find('.col-lg-3').each((j, subEl) => {
-      const text = $(subEl).text().trim();
-      if (/^[0-9\s()-]+$/.test(text)) {
-        phone = text.replace(/\s+/g, '');
+    let address = $(el).find('.ecz-module-pharmacy-location').text().trim();
+    if (address.startsWith('Adres:')) {
+      address = address.substring(6).trim();
+    }
+
+    let phone = $(el).find('.ecz-module-pharmacy-contact').text().trim();
+    if (phone.startsWith('Telefon:')) {
+      phone = phone.substring(8).trim().replace(/\s+/g, '');
+    }
+
+    // Harita butonundan koordinatları parse et
+    let loc = '';
+    const mapBtn = $(el).find('a[href*="maps/search"]');
+    if (mapBtn.length > 0) {
+      const href = mapBtn.attr('href');
+      const match = href.match(/query=([0-9.-]+),([0-9.-]+)/);
+      if (match) {
+        loc = `${match[1]},${match[2]}`;
       }
-    });
+    }
 
     pharmacies.push({
       name,
       dist: district,
       address,
       phone,
-      loc: '' // Scraper'dan koordinat gelmediği için boş bırakıyoruz
+      loc
     });
   });
 
