@@ -84,18 +84,34 @@ async function scrapeDutyPharmaciesFromWeb(city) {
   const citySlug = toSlug(city);
   const targetUrl = `${SCRAPER_BASE_URL}/${citySlug}/`;
   
-  const url = CLOUDFLARE_PROXY_URL 
-    ? `${CLOUDFLARE_PROXY_URL}?url=${encodeURIComponent(targetUrl)}`
-    : targetUrl;
+  let response;
+  let usedProxy = false;
   
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': SCRAPER_USER_AGENT
+  try {
+    response = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': SCRAPER_USER_AGENT
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
-  });
+  } catch (directErr) {
+    if (CLOUDFLARE_PROXY_URL) {
+      const url = `${CLOUDFLARE_PROXY_URL}?url=${encodeURIComponent(targetUrl)}`;
+      response = await fetch(url, {
+        headers: {
+          'User-Agent': SCRAPER_USER_AGENT
+        }
+      });
+      usedProxy = true;
+    } else {
+      throw directErr;
+    }
+  }
 
   if (!response.ok) {
-    throw new Error(`Scraper HTTP hatası: ${response.status}`);
+    throw new Error(`Scraper HTTP hatası (Proxy: ${usedProxy}): ${response.status}`);
   }
 
   const html = await response.text();
