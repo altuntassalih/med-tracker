@@ -92,14 +92,14 @@ export default function RemoteConfigGuard({ children }: RemoteConfigGuardProps) 
     return (
       <View style={[styles.overlayContainer, { backgroundColor: colors.background }]}>
         <Ionicons name="construct-outline" size={80} color={colors.primary} style={styles.icon} />
-        <Text style={[styles.title, { color: colors.text }]}>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>
           {isTr ? 'Bakım Çalışması' : 'System Maintenance'}
         </Text>
         <Text style={[styles.message, { color: colors.textSecondary }]}>
           {maintenanceMsg}
         </Text>
         <View style={styles.badgeContainer}>
-          <Text style={[styles.versionBadge, { backgroundColor: colors.card, color: colors.textSecondary }]}>
+          <Text style={[styles.versionBadge, { backgroundColor: colors.surfaceElevated, color: colors.textSecondary }]}>
             {isTr ? `Uygulama Sürümü: v${CURRENT_VERSION}` : `App Version: v${CURRENT_VERSION}`}
           </Text>
         </View>
@@ -121,7 +121,7 @@ export default function RemoteConfigGuard({ children }: RemoteConfigGuardProps) 
     return (
       <View style={[styles.overlayContainer, { backgroundColor: colors.background }]}>
         <Ionicons name="cloud-download-outline" size={80} color={colors.primary} style={styles.icon} />
-        <Text style={[styles.title, { color: colors.text }]}>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>
           {isTr ? 'Güncelleme Gerekli' : 'Update Required'}
         </Text>
         <Text style={[styles.message, { color: colors.textSecondary }]}>
@@ -163,8 +163,8 @@ export default function RemoteConfigGuard({ children }: RemoteConfigGuardProps) 
   const showBanner = config.bannerActive && bannerMsg && !bannerDismissed;
 
   // Map banner styles based on type
-  let bannerBg = colors.card;
-  let bannerText = colors.text;
+  let bannerBg: string = colors.surface;
+  let bannerText: string = colors.textPrimary;
   let bannerIcon = 'information-circle-outline';
 
   if (config.bannerType === 'success') {
