@@ -18,6 +18,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { getThemeColors } from '../constants/AppConstants';
 import GlobalAlert from '../components/GlobalAlert';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import RemoteConfigGuard from '../components/RemoteConfigGuard';
 
 const AUTH_TIMEOUT_MS = 3000;
 
@@ -352,36 +353,38 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <StatusBar style={theme === 'dark' ? 'light' : 'dark'} />
-        <View style={{ flex: 1 }}>
-          <Stack screenOptions={{ 
-            headerShown: false, 
-            animation: 'fade',
-            contentStyle: { backgroundColor: colors.background }
-          }}>
-            <Stack.Screen name="login" />
-            <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="add-medication" options={{ animation: 'slide_from_bottom' }} />
-            <Stack.Screen name="add-profile" options={{ animation: 'slide_from_bottom' }} />
-            <Stack.Screen name="medication-detail" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="profile-settings" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="archive" options={{ animation: 'slide_from_right' }} />
-          </Stack>
+        <RemoteConfigGuard>
+          <View style={{ flex: 1 }}>
+            <Stack screenOptions={{ 
+              headerShown: false, 
+              animation: 'fade',
+              contentStyle: { backgroundColor: colors.background }
+            }}>
+              <Stack.Screen name="login" />
+              <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="add-medication" options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="add-profile" options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="medication-detail" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="profile-settings" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="archive" options={{ animation: 'slide_from_right' }} />
+            </Stack>
 
-          {(!isAuthReady || isSyncing) && (
-            <View style={[
-              StyleSheet.absoluteFillObject,
-              {
-                backgroundColor: colors.background,
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 9999,
-              }
-            ]}>
-              <ActivityIndicator size="large" color={colors.primary} />
-            </View>
-          )}
-        </View>
+            {(!isAuthReady || isSyncing) && (
+              <View style={[
+                StyleSheet.absoluteFillObject,
+                {
+                  backgroundColor: colors.background,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 9999,
+                }
+              ]}>
+                <ActivityIndicator size="large" color={colors.primary} />
+              </View>
+            )}
+          </View>
+        </RemoteConfigGuard>
         <GlobalAlert />
       </SafeAreaProvider>
     </GestureHandlerRootView>

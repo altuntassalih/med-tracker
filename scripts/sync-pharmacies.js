@@ -364,7 +364,14 @@ async function syncDutyPharmacies() {
 
       // Eczaneleri ilçelerine dağıt
       pharmacies.forEach(p => {
-        const matched = districtsInCity.find(d => toSlug(d) === toSlug(p.dist) || p.address.toLowerCase().includes(d.toLowerCase()));
+        // Öncelikle p.dist ile tam eşleşme arayalım
+        let matched = districtsInCity.find(d => toSlug(d) === toSlug(p.dist));
+        
+        // Eğer p.dist eşleşmediyse ve p.dist boşsa, son çare olarak adres üzerinden eşleşme deneyelim
+        if (!matched && (!p.dist || p.dist.trim() === '')) {
+          matched = districtsInCity.find(d => p.address.toLowerCase().includes(d.toLowerCase()));
+        }
+        
         if (matched) {
           groupedByDistrict[matched].push(p);
         }

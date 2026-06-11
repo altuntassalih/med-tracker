@@ -29,6 +29,7 @@ admin.initializeApp({
 
 const db = admin.firestore();
 const ALL_PHARMACIES_COLLECTION = 'all_pharmacies';
+const OVERPASS_USER_AGENT = 'MedTrackerPharmacyApp/1.0 (contact: admin@medtrackerapp.com)';
 
 // 2. turkeyCities.ts dosyasından verileri oku
 let TURKEY_CITIES, CITY_CENTERS;
@@ -98,7 +99,7 @@ async function fetchDistrictCenters(city) {
         body: 'data=' + encodeURIComponent(query),
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          'User-Agent': OVERPASS_USER_AGENT
         }
       });
       if (response.status === 429) {
@@ -132,7 +133,7 @@ async function fetchPharmaciesFromOSM(city) {
         body: 'data=' + encodeURIComponent(query),
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          'User-Agent': OVERPASS_USER_AGENT
         }
       });
 
@@ -175,10 +176,19 @@ async function processAndSaveCity(city, elements, osmDistricts) {
     districtCenters[toSlug(d)] = null;
   });
 
+  const citySlug = toSlug(city);
   osmDistricts.forEach(el => {
     if (el.tags && el.tags.name && el.center) {
       const slug = toSlug(el.tags.name);
-      const matched = districts.find(d => toSlug(d) === slug);
+      let matched = districts.find(d => toSlug(d) === slug);
+      
+      // Robust matching for "Merkez" (Center) districts
+      if (!matched) {
+        if (slug === citySlug || slug === `${citySlug}-merkez` || slug === `merkez-${citySlug}`) {
+          matched = districts.find(d => toSlug(d) === 'merkez');
+        }
+      }
+      
       if (matched) {
         districtCenters[toSlug(matched)] = {
           lat: el.center.lat,
@@ -229,7 +239,7 @@ async function processAndSaveCity(city, elements, osmDistricts) {
 
     for (const d of districts) {
       const dSlug = toSlug(d);
-      const found = tagsToSearch.some(tag => tag.includes(dSlug) || dSlug.includes(tag));
+      const found = tagsToSearch.some(tag => tag.includes(dSlug));
       if (found) {
         matchedDistrict = d;
         break;
