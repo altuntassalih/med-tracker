@@ -161,9 +161,15 @@ export default function MedicationDetailScreen() {
           onPress: async () => {
             try {
               const newStartDate = new Date().toISOString().split('T')[0];
-              await updateMedication(med.id, { startDate: newStartDate });
-              updateMedInStore(med.id, { startDate: newStartDate });
-              setMedication((prev: any) => prev ? { ...prev, startDate: newStartDate } : prev);
+              const updatePayload: Partial<Medication> = { startDate: newStartDate };
+              if (!med.originalStartDate) {
+                updatePayload.originalStartDate = med.startDate;
+              }
+              await updateMedication(med.id, updatePayload);
+              updateMedInStore(med.id, updatePayload);
+              setMedication((prev: any) => 
+                prev ? { ...prev, startDate: newStartDate, originalStartDate: prev.originalStartDate || med.startDate } : prev
+              );
 
               const hasPermission = await requestNotificationPermission();
               if (hasPermission) {

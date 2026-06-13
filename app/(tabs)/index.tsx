@@ -142,8 +142,12 @@ export default function HomeScreen() {
           onPress: async () => {
             try {
               const newStartDate = computeNewStartDateForPeriod(med.intervalDays!);
-              await updateMedication(med.id, { startDate: newStartDate });
-              updateMedInStore(med.id, { startDate: newStartDate });
+              const updatePayload: Partial<Medication> = { startDate: newStartDate };
+              if (!med.originalStartDate) {
+                updatePayload.originalStartDate = med.startDate;
+              }
+              await updateMedication(med.id, updatePayload);
+              updateMedInStore(med.id, updatePayload);
 
               // Bildirimleri yeniden zamanla
               const hasPermission = await requestNotificationPermission();
@@ -267,8 +271,12 @@ export default function HomeScreen() {
       // fail silently
     }
 
-    await updateMedication(med.id, { startDate: newStartDate });
-    updateMedInStore(med.id, { startDate: newStartDate });
+    const updatePayload: Partial<Medication> = { startDate: newStartDate };
+    if (!med.originalStartDate) {
+      updatePayload.originalStartDate = med.startDate;
+    }
+    await updateMedication(med.id, updatePayload);
+    updateMedInStore(med.id, updatePayload);
 
     const hasPermission = await requestNotificationPermission();
     if (hasPermission) {
