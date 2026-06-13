@@ -128,10 +128,11 @@ export default function RootLayout() {
       for (const med of profileMeds) {
         // Aralıklı ilaç kontrolü: dün bu ilaç alınması gereken gündeydi mi?
         if (med.intervalDays && med.intervalDays > 1) {
-          const start = new Date(med.startDate).setHours(0, 0, 0, 0);
+          const startLimit = med.originalStartDate || med.startDate;
+          const start = new Date(startLimit).setHours(0, 0, 0, 0);
           const yesterday = new Date(yesterdayStr + 'T12:00:00').getTime();
           const daysDiff = Math.floor((yesterday - start) / (1000 * 60 * 60 * 24));
-          if (daysDiff % med.intervalDays !== 0) continue;
+          if (daysDiff < 0 || daysDiff % med.intervalDays !== 0) continue;
         }
 
         for (const time of (med.times || [])) {

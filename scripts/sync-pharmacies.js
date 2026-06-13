@@ -135,6 +135,7 @@ async function scrapeDutyPharmaciesFromWeb(city) {
   const html = await response.text();
   const $ = cheerio.load(html);
   const pharmacies = [];
+  const dutyDateRangeText = $('.ecz-module-info-text').text().trim();
 
   $('.ecz-module-pharmacy-info').each((i, el) => {
     const name = $(el).find('.ecz-module-pharmacy-name').text().trim().toUpperCase().replace(/İ/g, 'İ').replace(/I/g, 'I');
@@ -176,7 +177,7 @@ async function scrapeDutyPharmaciesFromWeb(city) {
     });
   });
 
-  return pharmacies;
+  return { pharmacies, dutyDateRangeText };
 }
 
 /** CollectAPI Fallback: Nöbetçileri resmi API'den çeker (Scraper hata verdiğinde) */
@@ -321,11 +322,14 @@ async function syncDutyPharmacies() {
   for (const city of cities) {
     console.log(`\n[${city}] nöbetçi eczaneleri taranıyor...`);
     let pharmacies = [];
+    let dutyDateRangeText = '';
     let scraperFailed = false;
 
     // A. Web Scraper'ı dene
     try {
-      pharmacies = await scrapeDutyPharmaciesFromWeb(city);
+      const result = await scrapeDutyPharmaciesFromWeb(city);
+      pharmacies = result.pharmacies;
+      dutyDateRangeText = result.dutyDateRangeText;
       console.log(`  -> Scraper başarılı! ${pharmacies.length} eczane bulundu.`);
     } catch (err) {
       scraperFailed = true;
@@ -408,10 +412,11 @@ async function syncDutyPharmacies() {
         const districtSlug = toSlug(d);
         const docRef = db.collection(DB_COLLECTIONS.DUTY_PHARMACIES).doc(`${citySlug}_${districtSlug}`);
         
-        batch.set(docRef, {
+         batch.set(docRef, {
           city,
           district: d,
           pharmacies: enrichedMeds,
+          dutyDateRangeText: dutyDateRangeText || '',
           updatedAt: Date.now()
         }, { merge: true });
 

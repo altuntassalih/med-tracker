@@ -10,18 +10,26 @@ admin.initializeApp({
 const db = admin.firestore();
 
 async function check() {
-  console.log('--- Checking all_pharmacies ---');
-  const allSnapshot = await db.collection('all_pharmacies').limit(10).get();
-  console.log('Total documents found in all_pharmacies limit 10:', allSnapshot.size);
-  allSnapshot.forEach(doc => {
-    console.log(`Document ID: ${doc.id}, City: ${doc.data().city}, District: ${doc.data().district}, Pharmacies Count: ${doc.data().pharmacies?.length}`);
+  console.log('--- Checking active_districts ---');
+  const activeSnap = await db.collection('active_districts').get();
+  activeSnap.forEach(doc => {
+    const data = doc.data();
+    console.log(`Active District ID: ${doc.id}, City: ${data.city}, District: ${data.district}, updatedAt:`, data.updatedAt);
   });
 
-  console.log('\n--- Checking duty_pharmacies ---');
-  const dutySnapshot = await db.collection('duty_pharmacies').limit(10).get();
-  console.log('Total documents found in duty_pharmacies limit 10:', dutySnapshot.size);
+  console.log('\n--- Checking duty_pharmacies for a sample ---');
+  const dutySnapshot = await db.collection('duty_pharmacies').limit(3).get();
   dutySnapshot.forEach(doc => {
-    console.log(`Document ID: ${doc.id}, City: ${doc.data().city}, District: ${doc.data().district}, Pharmacies Count: ${doc.data().pharmacies?.length}`);
+    const data = doc.data();
+    console.log(`Document ID: ${doc.id}, City: ${data.city}, District: ${data.district}`);
+    console.log(`  - updatedAt type: ${typeof data.updatedAt}, value:`, data.updatedAt);
+    if (data.updatedAt && data.updatedAt.toDate) {
+      console.log(`  - parsed via toDate():`, data.updatedAt.toDate());
+    }
+    console.log(`  - Pharmacies Count: ${data.pharmacies?.length}`);
+    if (data.pharmacies && data.pharmacies.length > 0) {
+      console.log(`  - Sample Pharmacy:`, JSON.stringify(data.pharmacies[0], null, 2));
+    }
   });
 }
 

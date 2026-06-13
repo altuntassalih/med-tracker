@@ -10,12 +10,23 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 async function check() {
-  console.log('--- Checking Istanbul documents in duty_pharmacies ---');
-  const snapshot = await db.collection('duty_pharmacies').where('city', '==', 'İstanbul').get();
-  console.log('Total Istanbul documents:', snapshot.size);
-  snapshot.forEach(doc => {
-    console.log(`Document ID: ${doc.id}, District: ${doc.data().district}, Pharmacies Count: ${doc.data().pharmacies?.length}`);
-  });
+  console.log('--- Checking details of istanbul_pendik in duty_pharmacies ---');
+  const docRef = db.collection('duty_pharmacies').doc('istanbul_pendik');
+  const docSnap = await docRef.get();
+  
+  if (docSnap.exists) {
+    const data = docSnap.data();
+    console.log('City:', data.city);
+    console.log('District:', data.district);
+    console.log('updatedAt:', data.updatedAt, 'type:', typeof data.updatedAt);
+    if (typeof data.updatedAt === 'number') {
+      console.log('updatedAt formatted:', new Date(data.updatedAt).toLocaleString('tr-TR'));
+    }
+    console.log('dutyDateRangeText:', data.dutyDateRangeText);
+    console.log('Pharmacies:', JSON.stringify(data.pharmacies, null, 2));
+  } else {
+    console.log('Document istanbul_pendik does not exist!');
+  }
 }
 
 check().catch(console.error);

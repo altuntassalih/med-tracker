@@ -292,6 +292,7 @@ export default function MedicationDetailScreen() {
     if (!medication) return [];
     const medLogs = medicationLogs.filter((l) => l.medicationId === medication.id);
     const days: { date: string; label: string; slots: { time: string; status: 'taken' | 'missed' | 'postponed' | 'none' }[] }[] = [];
+    const startLimit = medication.originalStartDate || medication.startDate;
 
     for (let i = 0; i < TRACKING_DAYS_COUNT; i++) {
       const d = new Date();
@@ -302,15 +303,25 @@ export default function MedicationDetailScreen() {
       if (medication.type === 'vaccine') {
         if (!medication.dates || !medication.dates.includes(dateStr)) continue;
       } else if (medication.intervalDays && medication.intervalDays > 1) {
-        const start = new Date(medication.startDate).setHours(0, 0, 0, 0);
-        const dayTs = d.setHours(0, 0, 0, 0);
-        const daysDiff = Math.floor((dayTs - start) / (1000 * 60 * 60 * 24));
-        if (daysDiff >= 0 && daysDiff % medication.intervalDays !== 0) continue;
-        if (daysDiff < 0) continue;
+        const hasLogsForDate = medLogs.some(
+          (l) => l.scheduledDate === dateStr || (!l.scheduledDate && l.takenAt.startsWith(dateStr))
+        );
+        if (!hasLogsForDate) {
+          const start = new Date(medication.startDate).setHours(0, 0, 0, 0);
+          const origStart = new Date(startLimit).setHours(0, 0, 0, 0);
+          const dayTs = d.setHours(0, 0, 0, 0);
+          const daysDiffCurrent = Math.floor((dayTs - start) / (1000 * 60 * 60 * 24));
+          const daysDiffOrig = Math.floor((dayTs - origStart) / (1000 * 60 * 60 * 24));
+          const isScheduledCurrent = daysDiffCurrent >= 0 && daysDiffCurrent % medication.intervalDays === 0;
+          const isScheduledOrig = daysDiffOrig >= 0 && daysDiffOrig % medication.intervalDays === 0;
+          if (!isScheduledCurrent && !isScheduledOrig) {
+            continue;
+          }
+        }
       }
 
       // İlaç başlangıcından önce gösterme
-      if (dateStr < medication.startDate) break;
+      if (dateStr < startLimit) break;
 
       const day = d.getDate().toString().padStart(2, '0');
       const month = (d.getMonth() + 1).toString().padStart(2, '0');
@@ -476,12 +487,12 @@ export default function MedicationDetailScreen() {
                   <Text style={styles.medHeroDose}>{medication.dosage} {getTranslatedUnit(medication.unit)}</Text>
                 )}
                 {medication.type !== 'vaccine' && medication.startDate && (
-                  <Text style={styles.medHeroDate}>📅 {formatDate(medication.startDate)}</Text>
+                  <Text style={styles.medHeroDate}>📅 {formatDate(medication.originalStartDate || medication.startDate)}</Text>
                 )}
               </View>
             </View>
           </View>
-
+ 
           {medication.type !== 'vaccine' && medication.times && medication.times.length > 0 && (
             <View style={styles.timesRow}>
               {medication.times.map((time: string, i: number) => (
@@ -491,7 +502,7 @@ export default function MedicationDetailScreen() {
               ))}
             </View>
           )}
-
+ 
           {/* AI Info inside Hero Card */}
           <TouchableOpacity
             style={[styles.compactAiBtn, isLoadingInfo && styles.infoButtonLoading]}
@@ -516,7 +527,7 @@ export default function MedicationDetailScreen() {
             )}
           </TouchableOpacity>
         </View>
-
+ 
         <View style={styles.infoCard}>
           <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoType')} value={getTranslatedTypeLabel(medication.type)} icon="📋" />
           {medication.type !== 'vaccine' && (
@@ -532,8 +543,8 @@ export default function MedicationDetailScreen() {
               icon="📅" 
             />
           )}
-          {medication.type !== 'vaccine' && medication.endDate && <InfoRow styles={styles} label={t(lang, 'medicines.dateRange')} value={`${formatDate(medication.startDate)} - ${formatDate(medication.endDate)}`} icon="📅" />}
-          {medication.type !== 'vaccine' && !medication.endDate && medication.startDate && <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoStart')} value={formatDate(medication.startDate)} icon="📅" />}
+          {medication.type !== 'vaccine' && medication.endDate && <InfoRow styles={styles} label={t(lang, 'medicines.dateRange')} value={`${formatDate(medication.originalStartDate || medication.startDate)} - ${formatDate(medication.endDate)}`} icon="📅" />}
+          {medication.type !== 'vaccine' && !medication.endDate && (medication.originalStartDate || medication.startDate) && <InfoRow styles={styles} label={t(lang, 'medicationDetail.infoStart')} value={formatDate(medication.originalStartDate || medication.startDate)} icon="📅" />}
           
           {medication.type !== 'vaccine' && medication.strength ? (
             <InfoRow styles={styles} label={lang === 'tr' ? 'Güç / Seviye' : 'Strength'} value={medication.strength} icon="💡" />

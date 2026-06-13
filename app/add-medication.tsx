@@ -548,6 +548,7 @@ export default function AddMedicationScreen() {
         // Düzenleme modunda startDate bugüne güncelliyoruz ki
         // değiştirilen saatler "Dün" olarak görünmesin
         startDate: recordType === 'vaccine' ? dates[0] : (isEditMode ? getLocalDateString() : startDate),
+        originalStartDate: recordType === 'vaccine' ? dates[0] : (existingMed ? (existingMed.originalStartDate || existingMed.startDate) : startDate),
         profileId: existingMed ? existingMed.profileId : activeProfile.id,
         userId: user?.uid ?? 'guest',
         isActive: true,

@@ -35,6 +35,7 @@ export interface Medication {
   intervalDays?: number;
   notes?: string;
   startDate: string;
+  originalStartDate?: string;
   endDate?: string;
   isActive: boolean;
   // Opsiyonel: ilaç güç seviyesi (örn. "500mg", "20mcg")

@@ -349,7 +349,7 @@ export default function HomeScreen() {
     const activeMeds = medications.filter(m => m.profileId === activeProfile?.id);
     if (activeMeds.length === 0) return new Date();
     const dates = activeMeds
-      .map(m => m.startDate)
+      .map(m => m.originalStartDate || m.startDate)
       .filter(Boolean)
       .map(dStr => {
         const [y, m, d] = dStr.split('-').map(Number);
@@ -374,7 +374,8 @@ export default function HomeScreen() {
 
     medications.forEach((med) => {
       const isCurrentlyActive = med.isActive !== false;
-      const hasStarted = med.startDate <= targetDateStr;
+      const startLimit = med.originalStartDate || med.startDate;
+      const hasStarted = startLimit <= targetDateStr;
       
       let isScheduledForTargetDate = false;
       if (isCurrentlyActive) {
@@ -390,11 +391,20 @@ export default function HomeScreen() {
         isForDay = !!med.dates && med.dates.includes(targetDateStr);
       } else {
         if (med.intervalDays && med.intervalDays > 1) {
-          const start = new Date(med.startDate + 'T00:00:00');
-          const target = new Date(targetDateStr + 'T00:00:00');
-          const daysDiff = Math.floor((target.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-          if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) {
+          const hasLogsForDate = logs.some(
+            (l) => l.medicationId === med.id && (l.scheduledDate === targetDateStr || (!l.scheduledDate && l.takenAt.startsWith(targetDateStr)))
+          );
+          if (hasLogsForDate) {
             isForDay = true;
+          } else {
+            const start = new Date(med.startDate + 'T00:00:00');
+            const origStart = new Date(startLimit + 'T00:00:00');
+            const target = new Date(targetDateStr + 'T00:00:00');
+            const daysDiffCurrent = Math.floor((target.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+            const daysDiffOrig = Math.floor((target.getTime() - origStart.getTime()) / (1000 * 60 * 60 * 24));
+            const isScheduledCurrent = daysDiffCurrent >= 0 && daysDiffCurrent % med.intervalDays === 0;
+            const isScheduledOrig = daysDiffOrig >= 0 && daysDiffOrig % med.intervalDays === 0;
+            isForDay = isScheduledCurrent || isScheduledOrig;
           }
         } else {
           isForDay = true;
@@ -422,12 +432,16 @@ export default function HomeScreen() {
 
         datesList.forEach((dateStr) => {
           let isScheduled = false;
-          if (med.startDate <= dateStr && (!med.endDate || med.endDate >= dateStr)) {
+          if (startLimit <= dateStr && (!med.endDate || med.endDate >= dateStr)) {
             if (med.intervalDays && med.intervalDays > 1) {
               const start = new Date(med.startDate + 'T00:00:00');
+              const origStart = new Date(startLimit + 'T00:00:00');
               const curr = new Date(dateStr + 'T00:00:00');
-              const daysDiff = Math.floor((curr.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-              if (daysDiff >= 0 && daysDiff % med.intervalDays === 0) {
+              const daysDiffCurrent = Math.floor((curr.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+              const daysDiffOrig = Math.floor((curr.getTime() - origStart.getTime()) / (1000 * 60 * 60 * 24));
+              const isScheduledCurrent = daysDiffCurrent >= 0 && daysDiffCurrent % med.intervalDays === 0;
+              const isScheduledOrig = daysDiffOrig >= 0 && daysDiffOrig % med.intervalDays === 0;
+              if (isScheduledCurrent || isScheduledOrig) {
                 isScheduled = true;
               }
             } else {
