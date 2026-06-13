@@ -73,6 +73,67 @@ const cleanNameForMatching = (name: string): string => {
   return cleaned;
 };
 
+const getDutyDateRangeText = (lang: LanguageCode): string => {
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+  const currentTotalMinutes = currentHour * 60 + currentMinute;
+  
+  // Nöbet değişimi genelde sabah 08:30'dadır.
+  const shiftChangeMinutes = 8 * 60 + 30;
+  
+  let startDate: Date;
+  let endDate: Date;
+  
+  if (currentTotalMinutes < shiftChangeMinutes) {
+    // Mevcut aktif nöbet dün akşam başladı, bugün sabah bitiyor
+    startDate = new Date();
+    startDate.setDate(startDate.getDate() - 1);
+    endDate = new Date();
+  } else {
+    // Mevcut aktif nöbet bugün akşam başlıyor, yarın sabah bitiyor
+    startDate = new Date();
+    endDate = new Date();
+    endDate.setDate(endDate.getDate() + 1);
+  }
+  
+  const formatDateStr = (date: Date): string => {
+    const day = date.getDate();
+    const monthIndex = date.getMonth();
+    const dayIndex = date.getDay();
+    
+    if (lang === 'tr') {
+      const months = [
+        'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+        'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
+      ];
+      const days = [
+        'Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'
+      ];
+      return `${day} ${months[monthIndex]} ${days[dayIndex]}`;
+    } else {
+      const months = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+      ];
+      const days = [
+        'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
+      ];
+      return `${months[monthIndex]} ${day}, ${days[dayIndex]}`;
+    }
+  };
+  
+  const startStr = formatDateStr(startDate);
+  const endStr = formatDateStr(endDate);
+  
+  if (lang === 'tr') {
+    return `${startStr} akşamından ${endStr} sabahına kadar.`;
+  } else {
+    return `From ${startStr} evening to ${endStr} morning.`;
+  }
+};
+
+
 // Geolocation constants
 const GPS_LAST_KNOWN_TIMEOUT_MS = 3000;
 const GPS_CURRENT_POSITION_TIMEOUT_MS = 8000;
@@ -126,6 +187,8 @@ export default function PharmaciesScreen() {
   const [userCoords, setUserCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [searchMode, setSearchMode] = useState<'duty' | 'all'>('duty');
   const [searchInitiated, setSearchInitiated] = useState(false);
+  const [dutyDateTextFromDb, setDutyDateTextFromDb] = useState<string | null>(null);
+  const [isOutdated, setIsOutdated] = useState(false);
   
   // Dropdown Modalları ve Arama Kelimeleri
   const [showCityModal, setShowCityModal] = useState(false);
@@ -143,11 +206,24 @@ export default function PharmaciesScreen() {
   const loadPharmacies = async () => {
     setIsLoading(true);
     try {
-      const result = searchMode === 'duty'
-        ? await fetchDutyPharmacies(city, district)
-        : await fetchCommonPharmacies(city, district, userCoords?.latitude, userCoords?.longitude);
+      let fetchedPharmacies: Pharmacy[] = [];
+      let isDemoResult = false;
       
-      let fetchedPharmacies = result.pharmacies;
+      if (searchMode === 'duty') {
+        const dutyResult = await fetchDutyPharmacies(city, district);
+        fetchedPharmacies = dutyResult.pharmacies;
+        setDutyDateTextFromDb(dutyResult.dutyDateRangeText || null);
+        isDemoResult = dutyResult.isDemo;
+        setIsOutdated(!!dutyResult.isOutdated);
+      } else {
+        const commonResult = await fetchCommonPharmacies(city, district, userCoords?.latitude, userCoords?.longitude);
+        fetchedPharmacies = commonResult.pharmacies;
+        setDutyDateTextFromDb(null);
+        isDemoResult = commonResult.isDemo;
+        setIsOutdated(false);
+      }
+      
+      setIsDemo(isDemoResult);
 
       if (searchMode === 'duty') {
         try {
@@ -183,7 +259,7 @@ export default function PharmaciesScreen() {
       }
 
       setPharmacies(fetchedPharmacies);
-      setIsDemo(result.isDemo);
+      setIsDemo(isDemoResult);
     } catch (err: any) {
       Alert.alert(
         lang === 'tr' ? 'Bağlantı Sorunu' : 'Connection Issue',
@@ -269,11 +345,25 @@ export default function PharmaciesScreen() {
         setDistrict(finalDistrict);
         setSearchInitiated(true);
 
-        const result = searchMode === 'duty'
-          ? await fetchDutyPharmacies(finalCity, finalDistrict)
-          : await fetchCommonPharmacies(finalCity, finalDistrict, latitude, longitude);
-        setPharmacies(result.pharmacies);
-        setIsDemo(result.isDemo);
+        let fetchedPharmacies: Pharmacy[] = [];
+        let isDemoResult = false;
+        
+        if (searchMode === 'duty') {
+          const dutyResult = await fetchDutyPharmacies(finalCity, finalDistrict);
+          fetchedPharmacies = dutyResult.pharmacies;
+          setDutyDateTextFromDb(dutyResult.dutyDateRangeText || null);
+          isDemoResult = dutyResult.isDemo;
+          setIsOutdated(!!dutyResult.isOutdated);
+        } else {
+          const commonResult = await fetchCommonPharmacies(finalCity, finalDistrict, latitude, longitude);
+          fetchedPharmacies = commonResult.pharmacies;
+          setDutyDateTextFromDb(null);
+          isDemoResult = commonResult.isDemo;
+          setIsOutdated(false);
+        }
+        
+        setPharmacies(fetchedPharmacies);
+        setIsDemo(isDemoResult);
         setIsLoading(false);
         return;
       }
@@ -307,6 +397,8 @@ export default function PharmaciesScreen() {
       if (searchMode === 'duty') {
         const dutyResult = await fetchDutyPharmacies(finalCity, finalDistrict);
         let fetchedPharmacies = dutyResult.pharmacies;
+        setDutyDateTextFromDb(dutyResult.dutyDateRangeText || null);
+        setIsOutdated(!!dutyResult.isOutdated);
 
         // O ilçedeki ortak eczaneleri filtrele
         const districtCommon = commonPharmacies.filter(
@@ -344,6 +436,7 @@ export default function PharmaciesScreen() {
         const commonResult = await fetchCommonPharmacies(finalCity, finalDistrict, latitude, longitude);
         setPharmacies(commonResult.pharmacies);
         setIsDemo(commonResult.isDemo);
+        setIsOutdated(false);
       }
     } catch (err) {
       Alert.alert(
@@ -482,6 +575,14 @@ export default function PharmaciesScreen() {
           </View>
         )}
 
+        {isOutdated && !isDemo && (
+          <View style={styles.outdatedBanner}>
+            <Text style={styles.outdatedBannerText}>
+              ⚠️ {lang === 'tr' ? 'Bu bölgenin nöbetçi eczane listesi henüz güncellenmemiş olabilir. Önceki liste gösteriliyor.' : 'Duty pharmacy list for this region may not be updated yet. Showing previous list.'}
+            </Text>
+          </View>
+        )}
+
         <View style={styles.selectorsRow}>
           <TouchableOpacity
             style={styles.selectorBtn}
@@ -534,6 +635,14 @@ export default function PharmaciesScreen() {
         </View>
       ) : (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {searchInitiated && searchMode === 'duty' && getSortedPharmacies().length > 0 && (
+            <View style={styles.dutyDateBanner}>
+              <Text style={styles.dutyDateBannerIcon}>📅</Text>
+              <Text style={styles.dutyDateBannerText}>
+                {dutyDateTextFromDb || getDutyDateRangeText(lang)}
+              </Text>
+            </View>
+          )}
           {!searchInitiated ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyStateEmoji}>🔍</Text>
@@ -811,6 +920,20 @@ const getStyles = (colors: any) =>
       color: colors.warningText || colors.warning,
       textAlign: 'center',
     },
+    outdatedBanner: {
+      backgroundColor: colors.warning + '15',
+      padding: SPACING.sm,
+      borderRadius: RADIUS.md,
+      borderWidth: 1,
+      borderColor: colors.warning + '30',
+      alignItems: 'center',
+    },
+    outdatedBannerText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.warningText || colors.warning,
+      textAlign: 'center',
+    },
     selectorsRow: {
       flexDirection: 'row',
       gap: SPACING.md,
@@ -1058,5 +1181,25 @@ const getStyles = (colors: any) =>
     modalItemTextActive: {
       color: colors.primary,
       fontWeight: 'bold',
+    },
+    dutyDateBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.primary + '12',
+      padding: SPACING.md,
+      borderRadius: RADIUS.lg,
+      borderWidth: 1,
+      borderColor: colors.primary + '30',
+      marginBottom: SPACING.md,
+      gap: SPACING.sm,
+    },
+    dutyDateBannerIcon: {
+      fontSize: 16,
+    },
+    dutyDateBannerText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.primary,
+      flex: 1,
     },
   });

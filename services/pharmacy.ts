@@ -39,19 +39,41 @@ const toSlug = (text: string): string => {
     .replace(/-+/g, '-');
 };
 
-/** Türkiye'de nöbetçi eczane önbelleğinin o güne ait geçerliliğini denetler (Nöbetler 09:00'da değişir) */
-const isDutyCacheValid = (updatedAt: number): boolean => {
-  const now = new Date();
-  const todayNineAM = new Date();
-  todayNineAM.setHours(9, 0, 0, 0);
+/** Türkiye'de nöbetçi eczane önbelleğinin o güne ait geçerliliğini denetler (Nöbetler 09:00 TRT / 06:00 UTC'de değişir) */
+const isDutyCacheValid = (updatedAt: any): boolean => {
+  if (!updatedAt) return false;
 
-  const cacheDate = new Date(updatedAt);
-
-  if (now >= todayNineAM) {
-    return cacheDate >= todayNineAM;
+  let cacheTimeMs: number;
+  if (typeof updatedAt.toMillis === 'function') {
+    cacheTimeMs = updatedAt.toMillis();
+  } else if (typeof updatedAt.toDate === 'function') {
+    cacheTimeMs = updatedAt.toDate().getTime();
+  } else if (typeof updatedAt === 'number') {
+    cacheTimeMs = updatedAt;
+  } else if (updatedAt.seconds) {
+    cacheTimeMs = updatedAt.seconds * 1000;
   } else {
-    const yesterdayNineAM = new Date(todayNineAM.getTime() - 24 * 60 * 60 * 1000);
-    return cacheDate >= yesterdayNineAM;
+    cacheTimeMs = new Date(updatedAt).getTime();
+  }
+
+  if (isNaN(cacheTimeMs)) return false;
+
+  const now = new Date();
+  
+  // Türkiye saati ile nöbet değişim saati 09:00'dur. 
+  // Türkiye her zaman UTC+3 olduğundan, bu saat UTC olarak her zaman 06:00:00.000'a denk gelir.
+  
+  // Bugünün UTC 06:00 zamanını oluşturalım
+  const todaySixAMUtc = new Date(now.getTime());
+  todaySixAMUtc.setUTCHours(6, 0, 0, 0);
+
+  if (now.getTime() >= todaySixAMUtc.getTime()) {
+    // Eğer şu anki zaman bugün UTC 06:00'dan sonra ise, önbellek bugün 06:00 UTC veya sonrasında güncellenmiş olmalıdır.
+    return cacheTimeMs >= todaySixAMUtc.getTime();
+  } else {
+    // Eğer şu anki zaman bugün UTC 06:00'dan önce ise, önbellek dün 06:00 UTC veya sonrasında güncellenmiş olmalıdır.
+    const yesterdaySixAMUtc = new Date(todaySixAMUtc.getTime() - 24 * 60 * 60 * 1000);
+    return cacheTimeMs >= yesterdaySixAMUtc.getTime();
   }
 };
 
@@ -111,7 +133,7 @@ export const getMockCommonPharmacies = (city: string, district: string): Pharmac
  * Firestore'da veri yoksa veya süresi geçmişse, arka planda ilçeyi active_districts'e ekler.
  * API çağrıları kaldırılmıştır. Firestore'da veri yoksa mock veri döner.
  */
-export const fetchDutyPharmacies = async (city: string, district: string): Promise<{ pharmacies: Pharmacy[]; isDemo: boolean }> => {
+export const fetchDutyPharmacies = async (city: string, district: string): Promise<{ pharmacies: Pharmacy[]; isDemo: boolean; dutyDateRangeText?: string; isOutdated?: boolean }> => {
   const firestore = getDb();
   const citySlug = toSlug(city);
   const districtSlug = toSlug(district);
@@ -124,8 +146,14 @@ export const fetchDutyPharmacies = async (city: string, district: string): Promi
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data.updatedAt && isDutyCacheValid(data.updatedAt) && Array.isArray(data.pharmacies) && data.pharmacies.length > 0) {
-          return { pharmacies: data.pharmacies, isDemo: false };
+        if (data.updatedAt && Array.isArray(data.pharmacies) && data.pharmacies.length > 0) {
+          const isValid = isDutyCacheValid(data.updatedAt);
+          return { 
+            pharmacies: data.pharmacies, 
+            isDemo: false, 
+            dutyDateRangeText: data.dutyDateRangeText,
+            isOutdated: !isValid
+          };
         }
       }
     } catch (err) {
@@ -133,7 +161,7 @@ export const fetchDutyPharmacies = async (city: string, district: string): Promi
     }
   }
 
-  // 2. Veritabanı boş veya güncel değilse bu ilçeyi aktif ilçeler kuyruğuna yaz
+  // 2. Veritabanı boş ise bu ilçeyi aktif ilçeler kuyruğuna yaz
   await registerActiveDistrict(city, district);
 
   // API bağlantısı kaldırıldığı için mock veri döner

@@ -6,6 +6,10 @@ on:
     - cron: '15 6 * * *'
     # Türkiye Saati ile Öğleden Sonra 14:00'te çalışır (11:00 UTC)
     - cron: '0 11 * * *'
+    # Türkiye Saati ile Akşamüstü 18:30'da çalışır (15:30 UTC)
+    - cron: '30 15 * * *'
+    # Türkiye Saati ile Gece 23:00'te çalışır (20:00 UTC)
+    - cron: '0 20 * * *'
   workflow_dispatch: # Manuel tetikleme desteği
 
 env:
