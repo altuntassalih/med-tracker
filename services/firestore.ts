@@ -442,3 +442,19 @@ export const upsertDailyHealthLog = async (
     } as DailyHealthLog;
   }
 };
+
+/** Kullanıcının son aktif olduğu zamanı günceller */
+export const updateUserLastActive = async (userId: string, email?: string): Promise<void> => {
+  const firestore = getDb();
+  if (!firestore) return;
+  try {
+    const userDocRef = doc(firestore, 'users', userId);
+    await setDoc(userDocRef, {
+      lastActive: serverTimestamp(),
+      ...(email ? { email } : {})
+    }, { merge: true });
+  } catch (_err) {
+    // Hata durumunda sessiz geçilir (RULE[error-mesaji.md] gereği console.log/error yazılmaz)
+  }
+};
+

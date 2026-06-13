@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { getMedicationInfo } from '../services/gemini';
 import { useStore } from '../store/useStore';
-import { updateMedication, clearMedicationLogs, addMedicationLog, updateMedicationLog, deleteMedicationLog, MedicationLog } from '../services/firestore';
+import { updateMedication, clearMedicationLogs, addMedicationLog, updateMedicationLog, deleteMedicationLog, MedicationLog, Medication } from '../services/firestore';
 import { cancelMedicationNotifications, checkAndRefreshEndOfDayNotification, rescheduleIntervalNotificationAfterTake, scheduleMedicationNotification, requestNotificationPermission, triggerCriticalStockNotification } from '../services/notifications';
 import { getThemeColors, TYPOGRAPHY, SPACING, RADIUS, AI_FEATURES_ENABLED, STOCK_THRESHOLD_CRITICAL, STOCK_THRESHOLD_WARNING } from '../constants/AppConstants';
 import { t, LanguageCode } from '../constants/translations';

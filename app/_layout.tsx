@@ -4,7 +4,7 @@ import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../services/firebase';
-import { getProfiles, getMedications, getMedicationLogs, addMedicationLog, getDailyHealthLogs, createProfile, addMedication, upsertDailyHealthLog } from '../services/firestore';
+import { getProfiles, getMedications, getMedicationLogs, addMedicationLog, getDailyHealthLogs, createProfile, addMedication, upsertDailyHealthLog, updateUserLastActive } from '../services/firestore';
 import {
   requestNotificationPermission,
   scheduleMedicationNotification,
@@ -21,6 +21,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import RemoteConfigGuard from '../components/RemoteConfigGuard';
 
 const AUTH_TIMEOUT_MS = 3000;
+const ONLINE_UPDATE_THROTTLE_MS = 5 * 60 * 1000; // 5 dakika (RULE[static-sting-rules.md] gereği sabit olarak tanımlandı)
+
 
 // Dünün tarihini YYYY-MM-DD formatında döner
 function getYesterdayStr(): string {
@@ -54,8 +56,17 @@ export default function RootLayout() {
   const [isSyncing, setIsSyncing] = useState(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const lastProcessedDateRef = useRef<string>('');
+  const lastOnlineUpdateRef = useRef<number>(0);
 
   const colors = getThemeColors(theme);
+
+  const updateOnlineStatus = async (userId: string, userEmail?: string) => {
+    const now = Date.now();
+    if (now - lastOnlineUpdateRef.current > ONLINE_UPDATE_THROTTLE_MS) {
+      lastOnlineUpdateRef.current = now;
+      await updateUserLastActive(userId, userEmail);
+    }
+  };
 
   // ---- Tüm Bildirimleri Yeniden Zamanla ----
   // Telefon yeniden başlatıldığında veya uygulama açıldığında çağrılır.
@@ -187,6 +198,12 @@ export default function RootLayout() {
         // Not: rescheduleAllNotifications BURAYA EKLEME — her ekran açılışında
         // immediate bildirim tetikleniyordu
         processMissedMedications();
+
+        // Kullanıcı ön plana geçtiğinde aktiflik zamanını güncelle
+        const state = useStore.getState();
+        if (state.user?.uid) {
+          updateOnlineStatus(state.user.uid, state.user.email);
+        }
       }
       appStateRef.current = nextAppState;
     };
@@ -333,6 +350,7 @@ export default function RootLayout() {
               displayName: firebaseUser.displayName ?? firebaseUser.email?.split('@')[0] ?? 'Kullanıcı',
               photoURL: firebaseUser.photoURL ?? '',
             });
+            updateOnlineStatus(firebaseUser.uid, firebaseUser.email ?? '');
           }
           setIsAuthReady(true);
         });
