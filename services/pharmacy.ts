@@ -39,8 +39,19 @@ const toSlug = (text: string): string => {
     .replace(/-+/g, '-');
 };
 
+const TURKEY_TIMEZONE_OFFSET_MS = 3 * 60 * 60 * 1000;
+const SHIFT_CHANGE_HOUR = 8;
+const SHIFT_CHANGE_MINUTE = 30;
+const SHIFT_CHANGE_TOTAL_MINUTES = SHIFT_CHANGE_HOUR * 60 + SHIFT_CHANGE_MINUTE;
+const DUTY_DATE_DELIMITER = 'akşamından';
+
+const TURKISH_MONTHS = [
+  'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+  'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
+];
+
 /** Türkiye'de nöbetçi eczane önbelleğinin o güne ait geçerliliğini denetler (Nöbetler 09:00 TRT / 06:00 UTC'de değişir) */
-const isDutyCacheValid = (updatedAt: any): boolean => {
+const isDutyCacheValid = (updatedAt: any, dutyDateRangeText?: string): boolean => {
   if (!updatedAt) return false;
 
   let cacheTimeMs: number;
@@ -67,14 +78,50 @@ const isDutyCacheValid = (updatedAt: any): boolean => {
   const todaySixAMUtc = new Date(now.getTime());
   todaySixAMUtc.setUTCHours(6, 0, 0, 0);
 
+  let isValid = false;
   if (now.getTime() >= todaySixAMUtc.getTime()) {
     // Eğer şu anki zaman bugün UTC 06:00'dan sonra ise, önbellek bugün 06:00 UTC veya sonrasında güncellenmiş olmalıdır.
-    return cacheTimeMs >= todaySixAMUtc.getTime();
+    isValid = cacheTimeMs >= todaySixAMUtc.getTime();
   } else {
     // Eğer şu anki zaman bugün UTC 06:00'dan önce ise, önbellek dün 06:00 UTC veya sonrasında güncellenmiş olmalıdır.
     const yesterdaySixAMUtc = new Date(todaySixAMUtc.getTime() - 24 * 60 * 60 * 1000);
-    return cacheTimeMs >= yesterdaySixAMUtc.getTime();
+    isValid = cacheTimeMs >= yesterdaySixAMUtc.getTime();
   }
+
+  // Eğer önbellek zamanı geçerliyse ve dutyDateRangeText varsa, tarih metnini de kontrol edelim
+  if (isValid && dutyDateRangeText) {
+    try {
+      // Türkiye saati hesaplama (UTC+3)
+      const trTime = new Date(now.getTime() + TURKEY_TIMEZONE_OFFSET_MS);
+      const trHour = trTime.getUTCHours();
+      const trMinute = trTime.getUTCMinutes();
+      const trTotalMinutes = trHour * 60 + trMinute;
+
+      let expectedStartDate = new Date(now.getTime() + TURKEY_TIMEZONE_OFFSET_MS);
+      if (trTotalMinutes < SHIFT_CHANGE_TOTAL_MINUTES) {
+        expectedStartDate.setUTCDate(expectedStartDate.getUTCDate() - 1);
+      }
+
+      const expectedDay = expectedStartDate.getUTCDate().toString();
+      const expectedMonthName = TURKISH_MONTHS[expectedStartDate.getUTCMonth()];
+
+      const parts = dutyDateRangeText.split(DUTY_DATE_DELIMITER);
+      if (parts.length > 0) {
+        const startPart = parts[0];
+        const hasDay = startPart.includes(expectedDay);
+        const hasMonth = startPart.toLowerCase().includes(expectedMonthName.toLowerCase());
+        
+        if (!hasDay || !hasMonth) {
+          // Başlangıç tarihi beklenen gün ve ayla uyuşmuyorsa veritabanındaki veri eskidir
+          return false;
+        }
+      }
+    } catch (e) {
+      // Hata durumunda sadece zaman önbellek geçerliliğine güven
+    }
+  }
+
+  return isValid;
 };
 
 /** Bir ilçeyi otomatik senkronizasyon kuyruğuna (active_districts) ekler */
@@ -147,7 +194,11 @@ export const fetchDutyPharmacies = async (city: string, district: string): Promi
       if (docSnap.exists()) {
         const data = docSnap.data();
         if (data.updatedAt && Array.isArray(data.pharmacies) && data.pharmacies.length > 0) {
-          const isValid = isDutyCacheValid(data.updatedAt);
+          const isValid = isDutyCacheValid(data.updatedAt, data.dutyDateRangeText);
+          if (!isValid) {
+            // Veri eski ise ilçeyi arka planda tekrar aktif kuyruğa ekle
+            await registerActiveDistrict(city, district);
+          }
           return { 
             pharmacies: data.pharmacies, 
             isDemo: false, 

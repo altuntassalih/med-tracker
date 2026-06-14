@@ -2,14 +2,17 @@ name: Nöbetçi Eczane Senkronizasyonu
 
 on:
   schedule:
-    # Türkiye Saati ile Sabah 09:15'te çalışır (06:15 UTC)
-    - cron: '15 6 * * *'
-    # Türkiye Saati ile Öğleden Sonra 14:00'te çalışır (11:00 UTC)
-    - cron: '0 11 * * *'
-    # Türkiye Saati ile Akşamüstü 18:30'da çalışır (15:30 UTC)
-    - cron: '30 15 * * *'
-    # Türkiye Saati ile Gece 23:00'te çalışır (20:00 UTC)
-    - cron: '0 20 * * *'
+    # --- HAFTA İÇİ PROGRAMI (Pazartesi - Cuma) ---
+    # Türkiye Saati ile 09:15'te çalışır (06:15 UTC)
+    - cron: '15 6 * * 1-5'
+    # Türkiye Saati ile 18:30'da çalışır (15:30 UTC)
+    - cron: '30 15 * * 1-5'
+    # Türkiye Saati ile 23:00'da çalışır (20:00 UTC)
+    - cron: '0 20 * * 1-5'
+
+    # --- HAFTA SONU PROGRAMI (Cumartesi - Pazar) ---
+    # Türkiye Saati ile 09:15'ten 00:15'e kadar her 3 saatte bir çalışır (UTC: 06:15, 09:15, 12:15, 15:15, 18:15, 21:15)
+    - cron: '15 6,9,12,15,18,21 * * 0,6'
   workflow_dispatch: # Manuel tetikleme desteği
 
 env:

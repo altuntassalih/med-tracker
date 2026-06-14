@@ -298,6 +298,48 @@ async function enrichDutyPharmaciesWithCoords(city, district, dutyPharmaciesList
   return dutyPharmaciesList;
 }
 
+const TURKEY_TIMEZONE_OFFSET_MS = 3 * 60 * 60 * 1000;
+const SHIFT_CHANGE_HOUR = 8;
+const SHIFT_CHANGE_MINUTE = 30;
+const SHIFT_CHANGE_TOTAL_MINUTES = SHIFT_CHANGE_HOUR * 60 + SHIFT_CHANGE_MINUTE;
+const DUTY_DATE_DELIMITER = 'akşamından';
+
+const TURKISH_MONTHS = [
+  'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+  'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
+];
+
+/**
+ * Scraped dutyDateRangeText'in bugün/güncel olup olmadığını denetler
+ */
+function isDutyDateToday(dutyDateRangeText) {
+  if (!dutyDateRangeText) return false;
+  
+  const now = new Date();
+  const trTime = new Date(now.getTime() + TURKEY_TIMEZONE_OFFSET_MS);
+  const trHour = trTime.getUTCHours();
+  const trMinute = trTime.getUTCMinutes();
+  const trTotalMinutes = trHour * 60 + trMinute;
+  
+  let expectedStartDate = new Date(now.getTime() + TURKEY_TIMEZONE_OFFSET_MS);
+  if (trTotalMinutes < SHIFT_CHANGE_TOTAL_MINUTES) {
+    expectedStartDate.setUTCDate(expectedStartDate.getUTCDate() - 1);
+  }
+  
+  const expectedDay = expectedStartDate.getUTCDate().toString();
+  const expectedMonthName = TURKISH_MONTHS[expectedStartDate.getUTCMonth()];
+  
+  const parts = dutyDateRangeText.split(DUTY_DATE_DELIMITER);
+  if (parts.length > 0) {
+    const startPart = parts[0];
+    const hasDay = startPart.includes(expectedDay);
+    const hasMonth = startPart.toLowerCase().includes(expectedMonthName.toLowerCase());
+    return hasDay && hasMonth;
+  }
+  
+  return false;
+}
+
 /** NÖBETÇİ ECZANE GÜNCELLEME İŞİ */
 async function syncDutyPharmacies() {
   console.log('--- Nöbetçi Eczaneler Senkronizasyonu Başlatıldı ---');
@@ -402,6 +444,10 @@ async function syncDutyPharmacies() {
       const batch = db.batch();
       let count = 0;
 
+      // Scraped tarihin güncelliğini kontrol et
+      const isToday = isDutyDateToday(dutyDateRangeText);
+      const updateTime = isToday ? Date.now() : (Date.now() - 24 * 60 * 60 * 1000);
+
       // Asenkron koordinat zenginleştirmesi için for...of kullanıyoruz
       const districtsWithMeds = districtsInCity.filter(d => (groupedByDistrict[d] || []).length > 0);
       for (const d of districtsWithMeds) {
@@ -417,7 +463,7 @@ async function syncDutyPharmacies() {
           district: d,
           pharmacies: enrichedMeds,
           dutyDateRangeText: dutyDateRangeText || '',
-          updatedAt: Date.now()
+          updatedAt: updateTime
         }, { merge: true });
 
         count++;
