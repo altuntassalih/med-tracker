@@ -13,6 +13,8 @@ on:
     # --- HAFTA SONU PROGRAMI (Cumartesi - Pazar) ---
     # Türkiye Saati ile 09:15'ten 00:15'e kadar her 3 saatte bir çalışır (UTC: 06:15, 09:15, 12:15, 15:15, 18:15, 21:15)
     - cron: '15 6,9,12,15,18,21 * * 0,6'
+  repository_dispatch:
+    types: [sync-duty-pharmacies]
   workflow_dispatch: # Manuel tetikleme desteği
 
 env:

@@ -4,6 +4,8 @@ on:
   schedule:
     # 3 günde bir gece yarısı yeni eczaneleri senkronize eder
     - cron: '0 0 */3 * *'
+  repository_dispatch:
+    types: [sync-recent-pharmacies]
   workflow_dispatch: # Manuel tetikleme desteği
 
 env:
